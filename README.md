@@ -189,7 +189,7 @@ Below is the outcome of a full run with the LLM helper and summarizer enabled. â
 
 ## Ingest (optional)
 
-If you have `harper_accounts.jsonl`, an ingest script can populate `memory/` (objects + indices + event store). If `memory/` is already populated, you can skip ingest and run the UI and `run_20_queries.py` as above.
+The repo includes **`harper_accounts.jsonl`** (70 sample accounts) so you can populate `memory/` and run the agent. If you have an ingest script, point it at this file to build `memory/objects/` and `memory/indices/`. If `memory/` is already populated, you can skip ingest and run the UI and `run_20_queries.py` as above.
 
 ---
 
