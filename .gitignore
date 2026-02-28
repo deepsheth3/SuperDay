@@ -34,6 +34,5 @@ wheels/
 *.swo
 .DS_Store
 
-# Data (optional: remove to commit memory and sample data)
+# Data (optional: remove to commit memory/ folder)
 memory/
-harper_accounts.jsonl
