@@ -1,8 +1,22 @@
 #!/usr/bin/env python3
-"""Run all 20 mixed test queries in sequence. Uses one session so session-aware queries (7–11, 17, 19) get context."""
-from harper_agent.main import run_agent_loop
+"""Run the app, open browser at localhost:5050, and feed all 20 queries via the API. Watch the UI (not terminal)."""
+from __future__ import annotations
 
-SESSION = "20-queries-session"
+import json
+import sys
+import threading
+import time
+import urllib.request
+import uuid
+import webbrowser
+
+# Avoid running app's __main__ when we import it
+if __name__ != "__main__":
+    # If imported, just expose QUERIES and a direct run without server
+    pass
+
+PORT = 5050
+BASE = f"http://127.0.0.1:{PORT}"
 
 QUERIES = [
     # 1. Very specific (6)
@@ -31,16 +45,87 @@ QUERIES = [
     ("20. Vague", "What about the defense contractor in Chicago?"),
 ]
 
+
+def _wait_for_server(timeout_sec: float = 30) -> bool:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        try:
+            req = urllib.request.Request(BASE + "/", method="GET")
+            with urllib.request.urlopen(req, timeout=2) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            time.sleep(0.3)
+    return False
+
+
+def _post_message(message: str, session_id: str | None) -> dict:
+    data = json.dumps({"message": message, "session_id": session_id or ""}).encode("utf-8")
+    req = urllib.request.Request(
+        BASE + "/api/chat",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _format_reply(payload: dict) -> str:
+    reply = payload.get("reply") or ""
+    if payload.get("list_items"):
+        reply += "\n" + "\n".join("  • " + item for item in payload["list_items"])
+    if payload.get("references"):
+        reply += "\n\nReferences:\n" + "\n".join(
+            "  [{}] {}".format(r.get("num", ""), r.get("label", r.get("source_id", "")))
+            for r in payload["references"]
+        )
+    return reply
+
+
 def main():
-    print("=" * 72)
-    print("20 MIXED QUERIES – specific, session-aware, list, vague")
-    print("=" * 72)
-    for label, query in QUERIES:
-        print(f"\n--- {label}: {query[:60]}{'...' if len(query) > 60 else ''} ---")
-        reply = run_agent_loop(SESSION, query)
-        out = reply if len(reply) <= 400 else reply[:397] + "..."
-        print(out)
-    print("\n" + "=" * 72)
+    import os
+    os.environ.setdefault("HARPER_MEMORY_ROOT", "memory")
+
+    from app import app
+
+    print("Starting Harper Agent at http://127.0.0.1:{} ...".format(PORT))
+    server = threading.Thread(
+        target=lambda: app.run(host="0.0.0.0", port=PORT, use_reloader=False, debug=False),
+        daemon=True,
+    )
+    server.start()
+
+    if not _wait_for_server():
+        print("Server did not start in time.", file=sys.stderr)
+        sys.exit(1)
+
+    session_id = str(uuid.uuid4())
+    print("Opening browser – watch the UI for the conversation.")
+    webbrowser.open("{}?session_id={}".format(BASE, session_id))
+    time.sleep(1)
+
+    print("Sending 20 queries. After each: 3 sec to read answer, then 2 sec before next. Watch localhost:5050.")
+    for i, (label, query) in enumerate(QUERIES, 1):
+        try:
+            payload = _post_message(query, session_id)
+            session_id = payload.get("session_id") or session_id
+            if payload.get("error"):
+                print("  {}/20 Error: {}".format(i, payload["error"]))
+            else:
+                print("  {}/20 sent.".format(i))
+        except Exception as e:
+            print("  {}/20 Request failed: {}".format(i, e))
+        if i < len(QUERIES):
+            time.sleep(3)   # 3 sec to read the answer
+            time.sleep(2)   # 2 sec before next query
+
+    print("Done. App still running at {}. Press Ctrl+C to stop.".format(BASE))
+    try:
+        server.join()
+    except KeyboardInterrupt:
+        pass
+
 
 if __name__ == "__main__":
     main()

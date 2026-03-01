@@ -60,10 +60,14 @@ class TurnRecord(BaseModel):
     message: str = ""
     resolved_account_id: str | None = None
     resolved_person_id: str | None = None
+    list_items: list[str] | None = None
+    references: list[dict[str, Any]] | None = None
 
 
 class PendingDisambiguation(BaseModel):
-    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    """When we asked 'Which one?', store the options and the original query so we can answer after the user picks."""
+    candidates: list[dict[str, Any]] = Field(default_factory=list)  # [{"account_id": "...", "name": "..."}, ...]
+    original_query: str = ""
     expires_at: datetime | None = None
 
 

@@ -25,9 +25,13 @@ def main():
     for label, query in QUERIES:
         print(f"\n--- {label} ---")
         print(f"Query: {query!r}")
-        reply = run_agent_loop(SESSION, query)
-        # Truncate long replies for readability
-        out = reply if len(reply) <= 600 else reply[:597] + "..."
+        result = run_agent_loop(SESSION, query)
+        narrative = result["narrative"]
+        if result.get("list_items"):
+            narrative += "\n" + "\n".join("  • " + item for item in result["list_items"])
+        if result.get("references"):
+            narrative += "\n\nReferences:\n" + "\n".join("  [{}] {}".format(r["num"], r.get("label", r.get("source_id", ""))) for r in result["references"])
+        out = narrative if len(narrative) <= 600 else narrative[:597] + "..."
         print(f"Reply:\n{out}")
     print("\n" + "=" * 70)
     print("Done. Start the UI with: python app.py")

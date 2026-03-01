@@ -6,7 +6,10 @@ import os
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    from pathlib import Path
+    # Project root = parent of harper_agent package
+    _root = Path(__file__).resolve().parent.parent
+    load_dotenv(_root / ".env")
 except ImportError:
     pass
 
@@ -65,7 +68,11 @@ def _call_helper_agent(
     focus_line = ""
     if session_state and session_state.active_focus:
         af = session_state.active_focus
-        focus_line = f"\nCurrent focus in session: type={af.type} id={af.id}. If the user refers to this (e.g. 'that', 'that company', 'from that', 'that one', 'that account', 'them', 'that application'), set anaphora=true and refers_to=\"{af.type}\"."
+        focus_line = (
+            f"\nCurrent focus in session: type={af.type} id={af.id}. "
+            "Use anaphora=true ONLY when the user clearly refers to this same focus without naming a different type (e.g. 'that', 'that company', 'from that', 'that one', 'that account', 'them', 'that application'). "
+            "If the user names a different kind of account (e.g. 'that public sector account', 'that childcare center in California', 'the hotel in Austin'), set anaphora=false and set constraints (industry, state, city) so we search for the account that matches that description."
+        )
     prompt = f"""You are an entity extraction helper. Output exactly one JSON object. No markdown, no explanation.
 
 Rules:
@@ -142,6 +149,55 @@ User query: {query}"""
         )
     except Exception:
         return None
+
+
+def resolve_disambiguation_reply(user_reply: str, candidates: list[dict]) -> str | None:
+    """Ask LLM which account the user chose. No regex or query rules; returns account_id or None."""
+    if not user_reply or not candidates:
+        return None
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    options = "\n".join(f"{i+1}. {c.get('name', '')} (id: {c.get('account_id', '')})" for i, c in enumerate(candidates))
+    prompt = f"""We asked the user which account they meant. They replied: "{user_reply}"
+
+Options:
+{options}
+
+Output ONLY the account_id they chose (e.g. acct_1eaf057f87), or the single word: none"""
+    try:
+        from google import genai
+        from google.genai import types
+        from google.genai import errors as genai_errors
+        client = genai.Client(api_key=api_key)
+        config = types.GenerateContentConfig(temperature=0, max_output_tokens=64)
+        for model in ("gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"):
+            try:
+                response = client.models.generate_content(model=model, contents=prompt, config=config)
+                text = getattr(response, "text", None)
+                if not text and getattr(response, "candidates", None) and response.candidates:
+                    c = response.candidates[0]
+                    if getattr(c, "content", None) and getattr(c.content, "parts", None) and c.content.parts:
+                        text = getattr(c.content.parts[0], "text", None)
+                if not text:
+                    continue
+                text = text.strip().lower()
+                if text == "none":
+                    return None
+                account_ids = {c.get("account_id") for c in candidates if c.get("account_id")}
+                if text in account_ids:
+                    return text
+                for aid in account_ids:
+                    if aid and aid in text:
+                        return aid
+                return None
+            except genai_errors.ClientError as e:
+                if "429" in str(e).upper() or "RESOURCE_EXHAUSTED" in str(e).upper():
+                    continue
+                return None
+    except Exception:
+        pass
+    return None
 
 
 def extract_entities(

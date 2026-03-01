@@ -24,13 +24,23 @@ def create_session_id() -> str:
     return str(uuid.uuid4())
 
 
-def append_turn(state: SessionState, role: str, message: str, resolved_account_id: str | None = None, resolved_person_id: str | None = None) -> None:
+def append_turn(
+    state: SessionState,
+    role: str,
+    message: str,
+    resolved_account_id: str | None = None,
+    resolved_person_id: str | None = None,
+    list_items: list[str] | None = None,
+    references: list[dict] | None = None,
+) -> None:
     state.turn_history.append(
         TurnRecord(
             role=role,
             message=message,
             resolved_account_id=resolved_account_id,
             resolved_person_id=resolved_person_id,
+            list_items=list_items,
+            references=references,
         )
     )
 

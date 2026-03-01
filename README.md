@@ -111,13 +111,22 @@ Both use the **Gemini API** (`GEMINI_API_KEY` in `.env`). The agent is designed 
 
 ## Running the 20 sample queries
 
-From the project root (with `.env` and `GEMINI_API_KEY` set):
+You can test the agent end-to-end using the 20 sample queries. From the project root (with `.env` and `GEMINI_API_KEY` set):
 
 ```bash
 python run_20_queries.py
 ```
 
-This runs all 20 queries in **one session** so that session-aware questions (7–11, 17, 19) refer to the account from the previous turn.
+**What this does:**
+
+1. **Starts the Flask app** in the background on http://127.0.0.1:5050.
+2. **Opens your browser** to that URL with a unique session ID so the UI stays in sync.
+3. **Sends all 20 queries one by one** to the API: each query is posted, then the script waits ~3 seconds for the answer to appear in the UI, then ~2 seconds before sending the next query.
+4. **Leaves the server running** when done so you can keep chatting in the browser.
+
+**Where to look:** Watch the **browser** (not the terminal). The terminal only prints short progress lines (e.g. `1/20 sent.`). The full conversation, answers, lists, and references appear in the chat UI.
+
+**Session behavior:** All 20 queries run in **one session**, so session-aware questions (e.g. 7–11, 17, 19) correctly refer to the account from the previous turn (“that company”, “that account”, etc.).
 
 ---
 
