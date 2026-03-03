@@ -106,6 +106,26 @@ Both use the **Gemini API** (`GEMINI_API_KEY` in `.env`). The agent is designed 
 | `GEMINI_API_KEY` | **Required.** Used for entity extraction and answer summarization. A paid key is recommended to avoid rate limits. |
 | `HARPER_MEMORY_ROOT` | Path to the `memory` directory (default: `memory`). |
 | `PORT` | Web UI port (default: `5050`). |
+| `REDIS_URL` | Optional. Redis connection URL (e.g. `redis://localhost:6379/0`) for the follow-up pipeline cache. When set, waiting-on-client account list, per-account follow-up state, and CDC cursor are cached with TTL for faster runs. |
+
+---
+
+## Follow-up and update pipeline (CDC)
+
+The **follow-up agent** runs on a schedule (e.g. cron or APScheduler) and:
+
+- **CDC consumer**: Processes `memory/event_store/events.jsonl`. On `communication_added` it resets follow-up state (e.g. `followup_count = 0`) so a new 3-day/6-day cycle can start. On `status_changed` it sends the client an immediate update email.
+- **Follow-up job**: Sends at most two follow-ups per “waiting on client” cycle: first at **3 days** of inactivity, second at **6 days**, then stops until the next new communication resets the count.
+
+Run the job once:
+
+```bash
+python run_followup_job.py
+```
+
+**Redis (optional):** Set `REDIS_URL` to cache the list of accounts waiting on client, per-account follow-up state, and the CDC read offset (all with TTL). This makes the pipeline faster when Redis is available.
+
+**Emitting CDC events:** When you write or update account data (e.g. ingest from `harper_accounts.jsonl`), append events with `followup_agent.events.append_event("communication_added", account_id, payload)` or `append_event("status_changed", account_id, {"new_status": "..."})` so the consumer and update handler can react.
 
 ---
 
@@ -168,10 +188,12 @@ Below is the outcome of a full run with the LLM helper and summarizer enabled. �
 ├── app.py                 # Web UI (Flask)
 ├── run_20_queries.py      # Run all 20 sample queries in one session
 ├── run_sample_queries.py  # Shorter sample set
+├── run_ingest.py          # Ingest harper_accounts.jsonl -> memory + CDC events
+├── run_followup_job.py    # Run follow-up & update pipeline once
 ├── harper_accounts.jsonl  # Source data (if you have it) for ingest
 ├── harper_agent/
 │   ├── main.py            # Agent loop: extract → navigate → resolve → evidence → answer
-│   ├── config.py          # MEMORY_ROOT
+│   ├── config.py          # MEMORY_ROOT, REDIS_URL
 │   ├── models.py          # EntityFrame, SessionState, EvidenceBundle, etc.
 │   ├── entity_extractor_third_party.py  # LLM helper (entity extraction)
 │   ├── index_navigator.py # Read indices, intersect by constraints
@@ -182,6 +204,16 @@ Below is the outcome of a full run with the LLM helper and summarizer enabled. �
 │   ├── session_manager.py
 │   ├── tools.py           # object_get_account
 │   └── normalize.py       # Slug/state helpers
+├── followup_agent/        # CDC + follow-up + update pipeline
+│   ├── __init__.py
+│   ├── ingest.py          # Write accounts + indices + CDC events
+│   ├── events.py          # Event log (events.jsonl, email_log.jsonl)
+│   ├── state.py           # harper_followup_state.json read/write
+│   ├── waiting.py         # Resolve 'waiting on client' accounts
+│   ├── cache.py           # Optional Redis cache with TTL
+│   ├── consumer.py        # CDC consumer (reset on comms, status updates)
+│   ├── job.py             # Follow-up job (3-day / 6-day, max two)
+│   └── update_handler.py  # Send client update emails on status change
 ├── memory/                # Populated by ingest (or preloaded)
 │   ├── objects/accounts/
 │   ├── objects/people/
@@ -189,8 +221,9 @@ Below is the outcome of a full run with the LLM helper and summarizer enabled. �
 │   ├── indices/industry/
 │   ├── indices/status/
 │   ├── indices/person/
-│   └── event_store/
-├── QUERIES_20.md          # Full list and notes for the 20 queries
+│   └── event_store/       # CDC event log (events.jsonl, email_log.jsonl)
+├── tests/
+│   └── test_followup_agent.py  # CDC + follow-up pipeline tests
 └── README.md              # This file
 ```
 

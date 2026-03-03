@@ -3,3 +3,4 @@ spacy>=3.7
 flask>=3.0
 google-genai>=1.0
 python-dotenv>=1.0
+redis>=5.0
