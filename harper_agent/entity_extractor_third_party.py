@@ -13,6 +13,7 @@ try:
 except ImportError:
     pass
 
+from harper_agent.constants import ALLOWED_SESSION_GOALS, INTENT_VALUES
 from harper_agent.models import (
     EntityConstraints,
     EntityFrame,
@@ -22,20 +23,6 @@ from harper_agent.models import (
     ReferenceType,
     SessionState,
 )
-# Reference data only: US state name -> 2-letter code (no query logic)
-US_STATE_TO_CODE = {
-    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
-    "colorado": "CO", "connecticut": "CT", "delaware": "DE", "florida": "FL", "georgia": "GA",
-    "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA",
-    "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
-    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
-    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV", "new jersey": "NJ",
-    "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND",
-    "ohio": "OH", "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI",
-    "south carolina": "SC", "south dakota": "SD", "tennessee": "TN", "texas": "TX",
-    "utah": "UT", "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",
-    "wisconsin": "WI", "wyoming": "WY",     "district of columbia": "DC",
-}
 
 
 def _get_index_keys(root) -> tuple[list[str], list[str]]:
@@ -73,6 +60,25 @@ def _call_helper_agent(
             "Use anaphora=true ONLY when the user clearly refers to this same focus without naming a different type (e.g. 'that', 'that company', 'from that', 'that one', 'that account', 'them', 'that application'). "
             "If the user names a different kind of account (e.g. 'that public sector account', 'that childcare center in California', 'the hotel in Austin'), set anaphora=false and set constraints (industry, state, city) so we search for the account that matches that description."
         )
+    session_ctx = ""
+    if session_state:
+        parts = []
+        if getattr(session_state, "rolling_summary", None) and session_state.rolling_summary:
+            parts.append(f"Conversation summary (older turns): {session_state.rolling_summary}")
+        if getattr(session_state, "recent_account_ids", None) and session_state.recent_account_ids:
+            parts.append(f"Recent accounts in this session (most recent last): {session_state.recent_account_ids}")
+        if getattr(session_state, "recent_person_ids", None) and session_state.recent_person_ids:
+            parts.append(f"Recent persons in this session: {session_state.recent_person_ids}")
+        if getattr(session_state, "last_intent", None) or getattr(session_state, "last_constraints", None):
+            intent = getattr(session_state, "last_intent", None) or "none"
+            constraints = getattr(session_state, "last_constraints", None) or {}
+            parts.append(f"Last query intent: {intent}. Last constraints: {constraints}.")
+        if getattr(session_state, "session_goal", None):
+            parts.append(f"Current session goal: {session_state.session_goal}. When the query is ambiguous, prefer constraints that match this goal (e.g. checking_follow_ups -> status awaiting_documents or contacted_by_harper; triaging_pipeline -> status filters).")
+        if parts:
+            session_ctx = "\n" + " ".join(parts)
+    intent_values = "|".join(sorted(INTENT_VALUES))
+    goal_values = "|".join(sorted(ALLOWED_SESSION_GOALS))
     prompt = f"""You are an entity extraction helper. Output exactly one JSON object. No markdown, no explanation.
 
 Rules:
@@ -80,11 +86,15 @@ Rules:
 - status: use ONLY one of these exact strings or null: {json.dumps(statuses)}
 - state: 2-letter US code (CO, CA, NY, NC, etc.).
 - city: lowercase slug (e.g. austin, new_york).
-{focus_line}
+{focus_line}{session_ctx}
 - For list/filter queries set constraints so the system can find matches: "list all public sector accounts" -> industry: "public_sector"; "accounts awaiting documents" -> status: "awaiting_documents"; "hospitality policy bound" -> industry: "hospitality", status: "policy_bound"; "retail accounts require documents" -> industry: "consumer_goods_retail", status: "awaiting_documents". Use exact keys from the lists above.
+- intent: use exactly one of: {", ".join(sorted(INTENT_VALUES))}. Use compare_accounts when the user asks to compare two accounts (e.g. "compare X and Y"). Use summarize_activity when they ask for recent activity/communications. Use suggest_next_action when they ask what to do next or for a recommendation. Otherwise use status_query, list_accounts, follow_up, or unknown.
+- When intent is compare_accounts, set entity_hints.compare_account_names to a list of exactly two company/account names (e.g. ["Evergreen Public Services", "Harborline Hotel Group"]). Otherwise set compare_account_names to [].
+- session_goal_hint: If the user clearly states what they are trying to do in this session (e.g. "I'm triaging pipeline today", "help me check follow-ups", "preparing outreach", "just reviewing this account"), set session_goal_hint to exactly one of: {", ".join(sorted(ALLOWED_SESSION_GOALS))}. Otherwise null.
 
 Output this JSON only:
-{{"primary_entity_type":"account|person|industry|location|unknown","entity_hints":{{"account_name":null|string,"person_name":null|string,"agent_name":null}},"constraints":{{"city":null|string,"state":null|string,"industry":null|string,"status":null|string}},"reference":{{"anaphora":true|false,"refers_to":null|"account"|"person"}}}}
+{{"primary_entity_type":"account|person|industry|location|unknown","entity_hints":{{"account_name":null|string,"person_name":null|string,"agent_name":null,"compare_account_names":[]|["name1","name2"]}},"constraints":{{"city":null|string,"state":null|string,"industry":null|string,"status":null|string}},"reference":{{"anaphora":true|false,"refers_to":null|"account"|"person"}},"intent":"{intent_values}","session_goal_hint":null|"{goal_values}"}}
+
 
 User query: {query}"""
 
@@ -129,12 +139,23 @@ User query: {query}"""
         ref_type = ref.get("refers_to")
         if ref_type and ref_type not in ("account", "person"):
             ref_type = None
+        intent_raw = data.get("intent") or "unknown"
+        if intent_raw not in INTENT_VALUES:
+            intent_raw = "unknown"
+        compare_names = hints.get("compare_account_names")
+        if not isinstance(compare_names, list):
+            compare_names = []
+        compare_names = [str(n).strip() for n in compare_names if n][:2]
+        goal_hint = data.get("session_goal_hint")
+        if goal_hint not in ALLOWED_SESSION_GOALS:
+            goal_hint = None
         return EntityFrame(
             primary_entity_type=primary,
             entity_hints=EntityHints(
                 account_name=hints.get("account_name"),
                 person_name=hints.get("person_name"),
                 agent_name=hints.get("agent_name"),
+                compare_account_names=compare_names,
             ),
             constraints=EntityConstraints(
                 city=constraints.get("city"),
@@ -146,6 +167,8 @@ User query: {query}"""
                 anaphora=anaphora,
                 refers_to=ReferenceType(ref_type) if ref_type else None,
             ),
+            intent=intent_raw,
+            session_goal_hint=goal_hint,
         )
     except Exception:
         return None

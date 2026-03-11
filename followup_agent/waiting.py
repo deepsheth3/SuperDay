@@ -5,9 +5,7 @@ import json
 from pathlib import Path
 
 from harper_agent.config import get_memory_root
-
-# Status keys that mean Harper is waiting on the client (e.g. documents, reply).
-WAITING_ON_CLIENT_STATUSES = ("awaiting_documents", "contacted_by_harper", "application_submitted")
+from harper_agent.constants import WAITING_ON_CLIENT_STATUSES
 
 
 def _read_account_ids(path: Path) -> list[str]:

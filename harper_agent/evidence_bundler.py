@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 from harper_agent.config import get_memory_root
+from harper_agent.constants import (
+    SOURCE_PATH_CALLS,
+    SOURCE_PATH_EMAILS,
+    SOURCE_PATH_PROFILE,
+    SOURCE_PATH_STATUS,
+)
 from harper_agent.models import EvidenceBundle, EvidenceItem
 from harper_agent.tools import object_get_account
 
@@ -18,7 +24,7 @@ def build_evidence_bundle_from_account_data(
     profile = data.get("profile") or data.get("full", {})
     if profile:
         items.append(EvidenceItem(
-            source_path="account/profile",
+            source_path=SOURCE_PATH_PROFILE,
             source_id=account_id,
             content=profile,
             timestamp="",
@@ -26,7 +32,7 @@ def build_evidence_bundle_from_account_data(
     status = data.get("status")
     if status:
         items.append(EvidenceItem(
-            source_path="account/status",
+            source_path=SOURCE_PATH_STATUS,
             source_id=account_id,
             content=status,
             timestamp="",
@@ -36,14 +42,14 @@ def build_evidence_bundle_from_account_data(
         emails = full.get("emails") or []
         for e in emails[:10]:
             items.append(EvidenceItem(
-                source_path="account/emails",
+                source_path=SOURCE_PATH_EMAILS,
                 source_id=e.get("id", ""),
                 content=e,
                 timestamp=e.get("sent_at", ""),
             ))
         for c in (full.get("phone_calls") or [])[:5]:
             items.append(EvidenceItem(
-                source_path="account/calls",
+                source_path=SOURCE_PATH_CALLS,
                 source_id=c.get("id", ""),
                 content=c,
                 timestamp=c.get("started_at", ""),

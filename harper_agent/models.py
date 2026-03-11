@@ -26,6 +26,7 @@ class EntityHints(BaseModel):
     account_name: str | None = None
     person_name: str | None = None
     agent_name: str | None = None
+    compare_account_names: list[str] = Field(default_factory=list)  # for compare_accounts intent: [name1, name2]
 
 
 class EntityConstraints(BaseModel):
@@ -47,6 +48,8 @@ class EntityFrame(BaseModel):
     entity_hints: EntityHints = Field(default_factory=EntityHints)
     constraints: EntityConstraints = Field(default_factory=EntityConstraints)
     reference: EntityReference = Field(default_factory=EntityReference)
+    intent: str | None = None  # status_query, list_accounts, follow_up, compare_accounts, summarize_activity, suggest_next_action, unknown
+    session_goal_hint: str | None = None  # reviewing_one_account | triaging_pipeline | checking_follow_ups | preparing_outreach when user states goal
 
 
 class ActiveFocus(BaseModel):
@@ -76,6 +79,13 @@ class SessionState(BaseModel):
     turn_history: list[TurnRecord] = Field(default_factory=list)
     active_focus: ActiveFocus | None = None
     pending_disambiguation: PendingDisambiguation | None = None
+    # Smart session history: capped recent entities and rolling summary
+    recent_account_ids: list[str] = Field(default_factory=list)  # max 5, most recent last
+    recent_person_ids: list[str] = Field(default_factory=list)   # max 5
+    rolling_summary: str = ""                                    # capped ~300 words
+    last_intent: str | None = None                               # e.g. status_query, list_accounts
+    last_constraints: dict[str, str] = Field(default_factory=dict)  # e.g. {"state": "CO", "industry": "public_sector"}
+    session_goal: str | None = None  # reviewing_one_account | triaging_pipeline | checking_follow_ups | preparing_outreach
 
 
 class EvidenceItem(BaseModel):

@@ -301,15 +301,18 @@ def api_chat():
     data = request.get_json() or {}
     message = (data.get("message") or "").strip()
     session_id = request.cookies.get("harper_session") or data.get("session_id") or create_session_id()
+    goal = (data.get("goal") or "").strip() or None  # optional: reviewing_one_account | triaging_pipeline | checking_follow_ups | preparing_outreach
     if not message:
         return jsonify({"error": "Empty message", "reply": ""}), 400
     try:
-        result = run_agent_loop(session_id, message)
+        result = run_agent_loop(session_id, message, goal=goal)
         payload = {"reply": result["narrative"], "session_id": session_id}
         if result.get("list_items"):
             payload["list_items"] = result["list_items"]
         if result.get("references"):
             payload["references"] = result["references"]
+        if result.get("suggested_follow_ups"):
+            payload["suggested_follow_ups"] = result["suggested_follow_ups"]
         resp = jsonify(payload)
         resp.set_cookie("harper_session", session_id, max_age=60 * 60 * 24)
         return resp

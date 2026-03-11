@@ -36,14 +36,16 @@ def resolve(
     frame: EntityFrame,
     candidate_ids: list[str],
     root: Path | None = None,
-) -> tuple[list[str], str | None]:
+) -> tuple[list[str], str | None, int]:
+    """Returns (resolved_ids, disambig | None, candidate_count)."""
     root = root or get_memory_root()
+    n_candidates = len(candidate_ids)
     hint = (frame.entity_hints.account_name or "").strip()
     if not hint:
-        return candidate_ids, None
+        return candidate_ids, None, n_candidates
     matched = [aid for aid in candidate_ids if _account_matches_hint(aid, hint, root)]
     if not matched:
-        return [], None
+        return [], None, n_candidates
     if len(matched) > 1:
-        return matched, "disambiguation"
-    return matched, None
+        return matched, "disambiguation", n_candidates
+    return matched, None, n_candidates

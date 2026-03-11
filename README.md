@@ -110,6 +110,15 @@ Both use the **Gemini API** (`GEMINI_API_KEY` in `.env`). The agent is designed 
 
 ---
 
+## Session goals
+
+You can set what the user is trying to do in the conversation so the agent biases answers and suggestions:
+
+- **API:** POST `/api/chat` accepts an optional `goal` in the JSON body. Allowed values: `reviewing_one_account`, `triaging_pipeline`, `checking_follow_ups`, `preparing_outreach`. If valid, the session goal is updated and used to bias entity extraction (e.g. favor status constraints when goal is `checking_follow_ups`), answer composition (emphasize status/next actions for triaging, contacts for outreach), and proactive suggestion order (e.g. “I can suggest a follow-up reminder” first when goal is `checking_follow_ups`).
+- **Natural language:** The entity extractor can infer a goal from the user message (e.g. “I’m triaging pipeline today”, “help me check follow-ups”) and set `session_goal_hint`; the agent then updates the session goal when no explicit `goal` was sent in the request.
+
+---
+
 ## Follow-up and update pipeline (CDC)
 
 The **follow-up agent** runs on a schedule (e.g. cron or APScheduler) and:

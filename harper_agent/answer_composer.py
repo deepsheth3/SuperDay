@@ -59,7 +59,12 @@ def _evidence_to_prompt_text(bundle: EvidenceBundle) -> str:
     return "\n".join(lines) if lines else "No evidence."
 
 
-def _summarize_with_llm(bundle: EvidenceBundle, query: str, evidence_text: str) -> str | None:
+def _summarize_with_llm(
+    bundle: EvidenceBundle,
+    query: str,
+    evidence_text: str,
+    session_goal: str | None = None,
+) -> str | None:
     """Use Gemini to produce a short, human-friendly summary with citations. Returns None on failure."""
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -71,9 +76,12 @@ def _summarize_with_llm(bundle: EvidenceBundle, query: str, evidence_text: str) 
         client = genai.Client(api_key=api_key)
         contacts = _contact_names_from_bundle(bundle)
         contact_line = f" Key contacts from the evidence: {', '.join(contacts)}." if contacts else ""
+        goal_line = ""
+        if session_goal:
+            goal_line = f"\nThe user is currently focused on: {session_goal}. Emphasize information that helps with that (e.g. triaging_pipeline -> status and next actions; checking_follow_ups -> last contact and follow-up state; preparing_outreach -> contacts and last touch).\n"
 
         prompt = f"""You are a helpful assistant summarizing insurance account information. Given the evidence below, write a brief, human-friendly summary (2–4 sentences) that answers the user's question. Use the citation numbers [1], [2], etc. when referring to specific facts. Be concise and easy to read. Do not list raw data; summarize in plain language.
-{contact_line}
+{contact_line}{goal_line}
 
 Evidence:
 {evidence_text}
@@ -148,7 +156,11 @@ def _fallback_narrative(bundle: EvidenceBundle, query: str) -> str:
     return " ".join(sentences)
 
 
-def compose_answer(bundle: EvidenceBundle, query: str = "") -> ComposedAnswer:
+def compose_answer(
+    bundle: EvidenceBundle,
+    query: str = "",
+    session_goal: str | None = None,
+) -> ComposedAnswer:
     """Build a human-friendly summarized answer, with citations. Uses LLM when GEMINI_API_KEY is set."""
     if not bundle.items:
         return ComposedAnswer(
@@ -157,7 +169,7 @@ def compose_answer(bundle: EvidenceBundle, query: str = "") -> ComposedAnswer:
             sources=[],
         )
     evidence_text = _evidence_to_prompt_text(bundle)
-    narrative = _summarize_with_llm(bundle, query, evidence_text)
+    narrative = _summarize_with_llm(bundle, query, evidence_text, session_goal)
     if not narrative:
         narrative = _fallback_narrative(bundle, query)
     return ComposedAnswer(
