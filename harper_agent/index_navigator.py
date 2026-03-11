@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from harper_agent.models import EntityFrame, PrimaryEntityType
+from harper_agent.normalize import location_state_for_index
 
 
 def _read_account_ids(path: Path) -> list[str]:
@@ -45,9 +46,10 @@ def navigate(frame: EntityFrame, root: Path | None = None) -> tuple[list[str], s
         return [], None
 
     candidates: list[list[str]] = []
-    # Location: indices/location/US/{state}/{city}/accounts.json
+    # Location: indices/location/US/{state}/{city}/accounts.json (state = 2-letter code)
     if frame.constraints.state or frame.constraints.city:
-        state = (frame.constraints.state or "").strip().upper() or None
+        state_raw = (frame.constraints.state or "").strip() or None
+        state = (location_state_for_index(state_raw or "").upper() or None) if state_raw else None
         city = (frame.constraints.city or "").strip().lower().replace(" ", "_") or None
         loc = indices / "location" / "US"
         if loc.is_dir():

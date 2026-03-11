@@ -11,8 +11,6 @@ from harper_agent.constants import (
     get_waiting_on_client_statuses,
     normalize_status_key,
 )
-from harper_agent.models import EvidenceBundle, EvidenceItem
-from harper_agent.proactive_suggestions import FOLLOWUP_REMINDER, suggest_follow_ups
 
 
 class TestIntentAndGoalFromConstants(TestCase):
@@ -28,30 +26,8 @@ class TestIntentAndGoalFromConstants(TestCase):
         self.assertIn("preparing_outreach", ALLOWED_SESSION_GOALS)
 
 
-class TestFollowupSuggestionUsesStatusSetMembership(TestCase):
-    """Follow-up reminder suggestion uses WAITING_ON_CLIENT_STATUSES membership, not substring."""
-
-    def test_status_in_set_adds_followup_reminder(self) -> None:
-        bundle = EvidenceBundle(items=[
-            EvidenceItem(
-                source_path="account/status",
-                source_id="a",
-                content={"current_status": "awaiting_documents"},
-            ),
-        ])
-        out = suggest_follow_ups(bundle, "acct_1", None)
-        self.assertIn(FOLLOWUP_REMINDER, out)
-
-    def test_status_not_in_set_does_not_add_followup_reminder(self) -> None:
-        bundle = EvidenceBundle(items=[
-            EvidenceItem(
-                source_path="account/status",
-                source_id="a",
-                content={"current_status": "policy_bound"},
-            ),
-        ])
-        out = suggest_follow_ups(bundle, "acct_1", None)
-        self.assertNotIn(FOLLOWUP_REMINDER, out)
+class TestStatusSetMembership(TestCase):
+    """Status set membership and normalize_status_key use constants."""
 
     def test_normalize_status_key_matches_set(self) -> None:
         self.assertEqual(normalize_status_key("awaiting_documents"), "awaiting_documents")
@@ -59,12 +35,7 @@ class TestFollowupSuggestionUsesStatusSetMembership(TestCase):
 
 
 class TestWaitingUsesSharedConstants(TestCase):
-    """followup_agent.waiting uses shared WAITING_ON_CLIENT_STATUSES from constants."""
-
-    def test_waiting_imports_same_statuses(self) -> None:
-        from followup_agent import waiting
-
-        self.assertIs(waiting.WAITING_ON_CLIENT_STATUSES, WAITING_ON_CLIENT_STATUSES)
+    """get_waiting_on_client_statuses returns shared constants."""
 
     def test_get_waiting_on_client_returns_default_set(self) -> None:
         default = get_waiting_on_client_statuses(None)

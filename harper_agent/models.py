@@ -76,6 +76,8 @@ class PendingDisambiguation(BaseModel):
 
 class SessionState(BaseModel):
     session_id: str = ""
+    tenant_id: str | None = None
+    user_id: str | None = None
     turn_history: list[TurnRecord] = Field(default_factory=list)
     active_focus: ActiveFocus | None = None
     pending_disambiguation: PendingDisambiguation | None = None
@@ -86,6 +88,13 @@ class SessionState(BaseModel):
     last_intent: str | None = None                               # e.g. status_query, list_accounts
     last_constraints: dict[str, str] = Field(default_factory=dict)  # e.g. {"state": "CO", "industry": "public_sector"}
     session_goal: str | None = None  # reviewing_one_account | triaging_pipeline | checking_follow_ups | preparing_outreach
+    # Design §8.2: open threads, recent topics, versioning
+    open_threads: list[str] = Field(default_factory=list)   # topic labels left open, capped
+    recent_topics: list[str] = Field(default_factory=list)  # last N topics, capped (e.g. 5)
+    # MemGPT-style working context: LLM-editable via tools (append/replace), size-capped
+    working_context: str = ""
+    version: int = 0
+    updated_at: datetime | None = None
 
 
 class EvidenceItem(BaseModel):

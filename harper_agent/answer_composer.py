@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 try:
     from dotenv import load_dotenv
@@ -10,6 +11,7 @@ except ImportError:
     pass
 
 from harper_agent.models import ComposedAnswer, EvidenceBundle
+from harper_agent import messages as msg
 
 
 def _contact_names_from_bundle(bundle: EvidenceBundle) -> list[str]:
@@ -30,6 +32,21 @@ def _contact_names_from_bundle(bundle: EvidenceBundle) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def _who_from_email_or_call(item: dict) -> str:
+    """Extract 'Harper agent X spoke to Y' style string for evidence so WHO questions can be answered."""
+    parts = []
+    harper_agent = (
+        item.get("harper_rep") or item.get("assigned_agent") or item.get("agent_name")
+        or (item.get("sent_by") if isinstance(item.get("sent_by"), str) else None)
+    )
+    if harper_agent:
+        parts.append(f"Harper agent: {harper_agent}")
+    contact = item.get("contact_name") or (item.get("to_address") if isinstance(item.get("to_address"), str) else None)
+    if contact and "harper" not in (contact or "").lower():
+        parts.append(f"contact: {contact}")
+    return "; ".join(parts) if parts else ""
+
+
 def _evidence_to_prompt_text(bundle: EvidenceBundle) -> str:
     """Turn evidence items into a compact numbered list for the LLM."""
     lines = []
@@ -47,16 +64,22 @@ def _evidence_to_prompt_text(bundle: EvidenceBundle) -> str:
             ind = c.get("industry_primary") or (c.get("structured_data") or {}).get("industry_primary", "")
             city = addr.get("city") or (c.get("structured_data") or {}).get("city", "")
             state = addr.get("state") or (c.get("structured_data") or {}).get("state", "")
-            lines.append(f"[{i}] Account: {name} — {ind}; {city}, {state}.")
+            agent = c.get("assigned_agent") or c.get("harper_rep") or c.get("harper_rep_id") or ""
+            agent_bit = f" Harper rep: {agent}." if agent else ""
+            lines.append(f"[{i}] Account: {name} — {ind}; {city}, {state}.{agent_bit}")
         elif "current_status" in c or "status" in c:
             lines.append(f"[{i}] Status: {c.get('current_status') or c.get('status', 'N/A')}.")
         elif "subject" in c:
-            lines.append(f"[{i}] Email: {c.get('subject', '')} ({c.get('sent_at', '')}).")
+            who = _who_from_email_or_call(c)
+            extra = f" — {who}" if who else ""
+            lines.append(f"[{i}] Email: {c.get('subject', '')} ({c.get('sent_at', '')}){extra}.")
         elif "call_summary" in c:
-            lines.append(f"[{i}] Call: {c.get('call_summary', '')} — {c.get('contact_name', '')} ({c.get('started_at', '')}).")
+            who = _who_from_email_or_call(c)
+            extra = f" — {who}" if who else ""
+            lines.append(f"[{i}] Call: {c.get('call_summary', '')} — contact: {c.get('contact_name', 'N/A')}{extra} ({c.get('started_at', '')}).")
         else:
             lines.append(f"[{i}] {str(c)[:150]}.")
-    return "\n".join(lines) if lines else "No evidence."
+    return "\n".join(lines) if lines else msg.MSG_NO_EVIDENCE_LINES
 
 
 def _summarize_with_llm(
@@ -65,7 +88,7 @@ def _summarize_with_llm(
     evidence_text: str,
     session_goal: str | None = None,
 ) -> str | None:
-    """Use Gemini to produce a short, human-friendly summary with citations. Returns None on failure."""
+    """Use Gemini to produce a short, human-friendly summary. Returns None on failure."""
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         return None
@@ -74,21 +97,14 @@ def _summarize_with_llm(
         from google.genai import types
 
         client = genai.Client(api_key=api_key)
-        contacts = _contact_names_from_bundle(bundle)
-        contact_line = f" Key contacts from the evidence: {', '.join(contacts)}." if contacts else ""
-        goal_line = ""
-        if session_goal:
-            goal_line = f"\nThe user is currently focused on: {session_goal}. Emphasize information that helps with that (e.g. triaging_pipeline -> status and next actions; checking_follow_ups -> last contact and follow-up state; preparing_outreach -> contacts and last touch).\n"
-
-        prompt = f"""You are a helpful assistant summarizing insurance account information. Given the evidence below, write a brief, human-friendly summary (2–4 sentences) that answers the user's question. Use the citation numbers [1], [2], etc. when referring to specific facts. Be concise and easy to read. Do not list raw data; summarize in plain language.
-{contact_line}{goal_line}
+        prompt = f"""Summarize the following evidence to answer the user's question. Write in plain language, 2–4 sentences. No citation numbers or references. No raw data dumps.
 
 Evidence:
 {evidence_text}
 
 User question: {query or 'Summarize this account.'}
 
-Write only the summary with inline citations (e.g. "The account is in application_submitted status [2]."). No preamble."""
+Write only the summary."""
 
         response = client.models.generate_content(
             model="gemini-2.0-flash",
@@ -109,6 +125,75 @@ Write only the summary with inline citations (e.g. "The account is in applicatio
     except Exception:
         pass
     return None
+
+
+def _summarize_with_llm_stream(
+    bundle: EvidenceBundle,
+    query: str,
+    evidence_text: str,
+    session_goal: str | None = None,
+):
+    """Yield text chunks from Gemini streaming API. Yields nothing and returns None on failure."""
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=api_key)
+        prompt = f"""Summarize the following evidence to answer the user's question. Plain language, 2–4 sentences. No citation numbers or references.
+
+Evidence:
+{evidence_text}
+
+User question: {query or 'Summarize this account.'}
+
+Write only the summary."""
+
+        stream = getattr(client.models, "generate_content_stream", None)
+        if not stream:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=500),
+            )
+            text = getattr(response, "text", None) or (response.candidates[0].content.parts[0].text if getattr(response, "candidates", None) else None)
+            if text:
+                yield text.strip()
+            return
+        for chunk in client.models.generate_content_stream(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=500),
+        ):
+            text = getattr(chunk, "text", None)
+            if not text and getattr(chunk, "candidates", None) and chunk.candidates:
+                c = chunk.candidates[0]
+                if getattr(c, "content", None) and c.content.parts:
+                    text = c.content.parts[0].text
+            if text:
+                yield text
+    except Exception:
+        pass
+
+
+def compose_answer_stream(
+    bundle: EvidenceBundle,
+    query: str = "",
+    session_goal: str | None = None,
+):
+    """Yield narrative chunks (streaming). Caller joins to get full narrative; falls back to non-streaming if no stream support."""
+    if not bundle.items:
+        yield _fallback_narrative(bundle, query)
+        return
+    evidence_text = _evidence_to_prompt_text(bundle)
+    chunks = []
+    for c in _summarize_with_llm_stream(bundle, query, evidence_text, session_goal):
+        chunks.append(c)
+        yield c
+    if not chunks:
+        yield _fallback_narrative(bundle, query)
 
 
 def _fallback_narrative(bundle: EvidenceBundle, query: str) -> str:
@@ -145,15 +230,27 @@ def _fallback_narrative(bundle: EvidenceBundle, query: str) -> str:
         loc_part = f" ({location})." if location else "."
         sentences.append(f"{company_name} is in {status} status [1][2]{loc_part}")
     elif status:
-        sentences.append(f"Current status: {status} [2].")
+        sentences.append(msg.MSG_FALLBACK_STATUS.format(status=status))
     else:
-        sentences.append("No account summary available.")
+        sentences.append(msg.MSG_FALLBACK_NO_SUMMARY)
 
     if contacts:
-        sentences.append(f"Primary contact(s): {', '.join(contacts)}.")
+        sentences.append(msg.MSG_FALLBACK_PRIMARY_CONTACTS.format(contacts=", ".join(contacts)))
     if recent:
-        sentences.append(f"Recent emails and calls are on record ({', '.join(recent)}).")
+        sentences.append(msg.MSG_FALLBACK_RECENT_ON_RECORD.format(refs=", ".join(recent)))
     return " ".join(sentences)
+
+
+def _strip_citation_refs(text: str) -> str:
+    """Remove trailing citation refs like ' [7, 8].' or ' [1]' so the user never sees them."""
+    if not text or not text.strip():
+        return text
+    s = text.strip()
+    # Strip ref at end, optionally followed by period; keep sentence-ending period if present
+    out = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]\.?\s*$", "", s).strip()
+    if out and s.rstrip().endswith(".") and not out.endswith("."):
+        out = out + "."
+    return out or text
 
 
 def compose_answer(
@@ -164,14 +261,18 @@ def compose_answer(
     """Build a human-friendly summarized answer, with citations. Uses LLM when GEMINI_API_KEY is set."""
     if not bundle.items:
         return ComposedAnswer(
-            narrative="No evidence available for this account.",
+            narrative=msg.MSG_NO_EVIDENCE,
             next_steps=None,
             sources=[],
         )
     evidence_text = _evidence_to_prompt_text(bundle)
-    narrative = _summarize_with_llm(bundle, query, evidence_text, session_goal)
+    try:
+        narrative = _summarize_with_llm(bundle, query, evidence_text, session_goal)
+    except Exception:
+        narrative = None
     if not narrative:
         narrative = _fallback_narrative(bundle, query)
+    narrative = _strip_citation_refs(narrative or "")
     return ComposedAnswer(
         narrative=narrative,
         next_steps=None,

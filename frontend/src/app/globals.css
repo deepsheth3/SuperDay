@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --harper-bg: #F8EDE6;
+  --harper-border: #e8d9cf;
+  --harper-accent: #EC7A72;
+  --harper-secondary: #2D5E6C;
+  --harper-text: #2C2C2C;
+}
+
+body {
+  @apply antialiased;
+  background-color: var(--harper-bg);
+  color: var(--harper-text);
+}

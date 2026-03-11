@@ -12,19 +12,29 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with your Gemini API key (required for entity extraction and answer summarization):
+Create a `.env` file with your Gemini API key (required for the agent LLM and answer composition):
 
 ```
 GEMINI_API_KEY=your_key_here
 ```
 
-Run the web UI:
+Run the **API** (Flask) and the **frontend** (Next.js) separately:
 
+**Terminal 1 – API**
 ```bash
 python app.py
 ```
+Runs the Harper API on **http://127.0.0.1:5050**. `GET /` redirects to the frontend.
 
-Open **http://127.0.0.1:5050** and ask about accounts (e.g. *“What is the status of Evergreen Public Services in Austin CO?”*).
+**Terminal 2 – Frontend**
+```bash
+cd frontend
+cp .env.local.example .env.local
+npm install
+npm run dev
+```
+Runs the Next.js chat UI on **http://localhost:3000**. Open this URL to chat. Set `FRONTEND_URL=http://localhost:3000` in root `.env` if needed for CORS.
+
 
 ---
 
@@ -75,16 +85,14 @@ So: **one folder per account under `objects/`** is for storage and full reads; *
 
 ## AI agent workflow
 
-The pipeline is **deterministic orchestration** around two LLM calls (entity extraction and answer composition):
+The agent uses a **MemGPT-style agentic loop**: the LLM controls the flow and calls **tools** (recall search, archival search, working context edit, compose answer) instead of a fixed pipeline.
 
-1. **Entity extraction (LLM helper)** – The user message and current session (e.g. “last focused account”) go to a **helper** LLM. It returns a structured **EntityFrame**: primary type (account/person/industry/location), hints (account name, person name), constraints (city, state, industry, status), and **anaphora** (e.g. “that” = current focus). No regex or query-specific rules; all interpretation is in the model.
-2. **Index navigation** – Using the EntityFrame, we read the relevant index files (e.g. `indices/location/US/co/...`, `indices/industry/public_sector/accounts.json`), intersect the `account_ids` lists, and get candidate IDs. If the user referred to “that” and the helper set anaphora, we skip navigation and use the session’s focused account ID.
-3. **Resolve** – We filter (or disambiguate) candidates by **account name** against object data (e.g. company name in `profile.json`).
-4. **Evidence** – For the chosen account ID we load `profile`, `status`, and `full` (emails, calls, etc.) and build an **evidence bundle** (each item has a source path/id for citations).
-5. **Answer composition (LLM)** – The evidence bundle and the user question go to a second LLM. It produces a short, **human-friendly summary** with inline citations (e.g. [1], [2], [3–9]). Citations are checked against the evidence bundle.
-6. **Session update** – We append the turn to session history and set **active focus** to the resolved account so the next “from that company” or “what about that one?” uses the same account.
-
-So: **one agent loop** = one helper call (entities) + optional one composer call (answer). The rest is index reads, set intersection, and object reads.
+1. **Main context** – System instructions, working context (LLM-editable facts), and a FIFO of recent messages. A **queue manager** enforces a token budget: memory-pressure warning when near full, eviction of oldest messages to **recall storage** with a recursive summary when over.
+2. **LLM** – Receives the main context and returns either a **message to the user** or a **function call** (e.g. `recall_storage.search`, `archival_storage.search`, `working_context.append`, `compose_answer`).
+3. **Function executor** – Runs the requested tool, appends the result to context, and can **chain** (heartbeat) for another LLM call before yielding.
+4. **Recall storage** – Persistent conversation history; the LLM can search it via a tool.
+5. **Archival storage** – Indices + account objects; the LLM searches by constraints or gets evidence for an account via tools. Under the hood: index navigation, resolve, evidence bundling, and answer composition are reused as building blocks.
+6. **Session update** – Each turn is appended to the FIFO and written to recall; working context is updated if the LLM used append/replace tools.
 
 ---
 
@@ -92,10 +100,10 @@ So: **one agent loop** = one helper call (entities) + optional one composer call
 
 | Step | Role | What the LLM does |
 |------|------|-------------------|
-| **Entity extraction** | Helper agent | Takes user query + session focus; outputs EntityFrame (account/person/industry/location, constraints, anaphora). Index keys (industry, status) are read from the filesystem and passed in the prompt so the model outputs valid slugs. |
-| **Answer composition** | Summarizer | Takes evidence bundle + user question; outputs a brief narrative with citations. No query-specific logic; the model decides what to emphasize. |
+| **Agent loop** | Controller | Receives main context (system + working context + FIFO); decides whether to call a tool (recall search, archival search, working context edit, compose answer) or to send a final message to the user. Can chain multiple tool calls (heartbeat) before responding. |
+| **Answer composition** | Tool | When the LLM calls `compose_answer`, the evidence bundle and user question go to a separate LLM call that produces a brief narrative with citations. |
 
-Both use the **Gemini API** (`GEMINI_API_KEY` in `.env`). The agent is designed for **LLM-only** entity extraction (no spaCy or regex fallback).
+Both use the **Gemini API** (`GEMINI_API_KEY` in `.env`).
 
 ---
 
@@ -103,38 +111,16 @@ Both use the **Gemini API** (`GEMINI_API_KEY` in `.env`). The agent is designed 
 
 | Variable | Description |
 |----------|-------------|
-| `GEMINI_API_KEY` | **Required.** Used for entity extraction and answer summarization. A paid key is recommended to avoid rate limits. |
+| `GEMINI_API_KEY` | **Required.** Used for the agent LLM and answer composition. A paid key is recommended to avoid rate limits. |
 | `HARPER_MEMORY_ROOT` | Path to the `memory` directory (default: `memory`). |
-| `PORT` | Web UI port (default: `5050`). |
-| `REDIS_URL` | Optional. Redis connection URL (e.g. `redis://localhost:6379/0`) for the follow-up pipeline cache. When set, waiting-on-client account list, per-account follow-up state, and CDC cursor are cached with TTL for faster runs. |
+| `PORT` | API port (default: `5050`). |
+| `FRONTEND_URL` | Origin of the Next.js frontend for CORS and redirects (default: `http://localhost:3000`). |
 
 ---
 
 ## Session goals
 
-You can set what the user is trying to do in the conversation so the agent biases answers and suggestions:
-
-- **API:** POST `/api/chat` accepts an optional `goal` in the JSON body. Allowed values: `reviewing_one_account`, `triaging_pipeline`, `checking_follow_ups`, `preparing_outreach`. If valid, the session goal is updated and used to bias entity extraction (e.g. favor status constraints when goal is `checking_follow_ups`), answer composition (emphasize status/next actions for triaging, contacts for outreach), and proactive suggestion order (e.g. “I can suggest a follow-up reminder” first when goal is `checking_follow_ups`).
-- **Natural language:** The entity extractor can infer a goal from the user message (e.g. “I’m triaging pipeline today”, “help me check follow-ups”) and set `session_goal_hint`; the agent then updates the session goal when no explicit `goal` was sent in the request.
-
----
-
-## Follow-up and update pipeline (CDC)
-
-The **follow-up agent** runs on a schedule (e.g. cron or APScheduler) and:
-
-- **CDC consumer**: Processes `memory/event_store/events.jsonl`. On `communication_added` it resets follow-up state (e.g. `followup_count = 0`) so a new 3-day/6-day cycle can start. On `status_changed` it sends the client an immediate update email.
-- **Follow-up job**: Sends at most two follow-ups per “waiting on client” cycle: first at **3 days** of inactivity, second at **6 days**, then stops until the next new communication resets the count.
-
-Run the job once:
-
-```bash
-python run_followup_job.py
-```
-
-**Redis (optional):** Set `REDIS_URL` to cache the list of accounts waiting on client, per-account follow-up state, and the CDC read offset (all with TTL). This makes the pipeline faster when Redis is available.
-
-**Emitting CDC events:** When you write or update account data (e.g. ingest from `harper_accounts.jsonl`), append events with `followup_agent.events.append_event("communication_added", account_id, payload)` or `append_event("status_changed", account_id, {"new_status": "..."})` so the consumer and update handler can react.
+POST `/api/chat` accepts an optional `goal` in the JSON body. Allowed values: `reviewing_one_account`, `triaging_pipeline`, `checking_follow_ups`, `preparing_outreach`. If valid, the session goal is updated and can bias answer composition and tool use.
 
 ---
 
@@ -149,7 +135,7 @@ python run_20_queries.py
 **What this does:**
 
 1. **Starts the Flask app** in the background on http://127.0.0.1:5050.
-2. **Opens your browser** to that URL with a unique session ID so the UI stays in sync.
+2. **Opens your browser** to that URL (or open the Next.js frontend at http://localhost:3000 if it’s running) with a unique session ID so the UI stays in sync.
 3. **Sends all 20 queries one by one** to the API: each query is posted, then the script waits ~3 seconds for the answer to appear in the UI, then ~2 seconds before sending the next query.
 4. **Leaves the server running** when done so you can keep chatting in the browser.
 
@@ -194,53 +180,50 @@ Below is the outcome of a full run with the LLM helper and summarizer enabled. �
 
 ```
 .
-├── app.py                 # Web UI (Flask)
+├── app.py                 # Harper API (Flask); GET / redirects to frontend
+├── frontend/              # Next.js chat UI (TypeScript, Tailwind, App Router)
+│   ├── src/app/           # Chat page, layout, globals
+│   └── src/lib/api.ts     # getHistory, sendMessage, types
 ├── run_20_queries.py      # Run all 20 sample queries in one session
 ├── run_sample_queries.py  # Shorter sample set
-├── run_ingest.py          # Ingest harper_accounts.jsonl -> memory + CDC events
-├── run_followup_job.py    # Run follow-up & update pipeline once
-├── harper_accounts.jsonl  # Source data (if you have it) for ingest
 ├── harper_agent/
-│   ├── main.py            # Agent loop: extract → navigate → resolve → evidence → answer
-│   ├── config.py          # MEMORY_ROOT, REDIS_URL
+│   ├── main.py            # Entry: run_agent_loop → agentic loop
+│   ├── agent_loop.py      # MemGPT-style loop: queue manager, LLM, function executor
+│   ├── agent_prompts.py   # System prompt + tool schemas
+│   ├── function_executor.py # Parse LLM output, run tools (recall, archival, working context, compose)
+│   ├── queue_manager.py   # Token budget, memory pressure, eviction to recall
+│   ├── archival_storage.py # Archival search + get_evidence (indices + objects)
+│   ├── transcript_service.py # Recall storage: persist, search
+│   ├── session_manager.py # Session state, working context, FIFO
+│   ├── session_store.py   # Durable session persistence (file-based)
+│   ├── config.py          # MEMORY_ROOT
 │   ├── models.py          # EntityFrame, SessionState, EvidenceBundle, etc.
-│   ├── entity_extractor_third_party.py  # LLM helper (entity extraction)
 │   ├── index_navigator.py # Read indices, intersect by constraints
 │   ├── resolver.py        # Filter by account name
 │   ├── evidence_bundler.py
-│   ├── answer_composer.py # LLM summarization + citation
-│   ├── citation_verifier.py
-│   ├── session_manager.py
+│   ├── answer_composer.py # LLM summarization + citations
 │   ├── tools.py           # object_get_account
+│   ├── messages.py        # User-facing message constants
+│   ├── constants.py       # Intents, goals, evidence scopes, status semantics
 │   └── normalize.py       # Slug/state helpers
-├── followup_agent/        # CDC + follow-up + update pipeline
-│   ├── __init__.py
-│   ├── ingest.py          # Write accounts + indices + CDC events
-│   ├── events.py          # Event log (events.jsonl, email_log.jsonl)
-│   ├── state.py           # harper_followup_state.json read/write
-│   ├── waiting.py         # Resolve 'waiting on client' accounts
-│   ├── cache.py           # Optional Redis cache with TTL
-│   ├── consumer.py        # CDC consumer (reset on comms, status updates)
-│   ├── job.py             # Follow-up job (3-day / 6-day, max two)
-│   └── update_handler.py  # Send client update emails on status change
-├── memory/                # Populated by ingest (or preloaded)
+├── memory/                # Populated by ingest or preloaded
 │   ├── objects/accounts/
 │   ├── objects/people/
-│   ├── indices/location/
-│   ├── indices/industry/
-│   ├── indices/status/
-│   ├── indices/person/
-│   └── event_store/       # CDC event log (events.jsonl, email_log.jsonl)
+│   └── indices/           # location, industry, status, person
 ├── tests/
-│   └── test_followup_agent.py  # CDC + follow-up pipeline tests
-└── README.md              # This file
+│   ├── test_memgpt_tools.py
+│   ├── test_constants_no_hardcoded.py
+│   ├── test_session_goals.py
+│   ├── test_smart_session.py
+│   └── test_new_intents_confidence.py
+└── README.md
 ```
 
 ---
 
 ## Ingest (optional)
 
-The repo includes **`harper_accounts.jsonl`** (70 sample accounts) so you can populate `memory/` and run the agent. If you have an ingest script, point it at this file to build `memory/objects/` and `memory/indices/`. If `memory/` is already populated, you can skip ingest and run the UI and `run_20_queries.py` as above.
+If you have source data (e.g. `harper_accounts.jsonl`), you can populate `memory/objects/` and `memory/indices/` with an ingest script. If `memory/` is already populated, run the frontend and API as in Quick start and use `run_20_queries.py` to test.
 
 ---
 

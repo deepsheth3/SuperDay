@@ -1,29 +1,38 @@
-"""Session state (in-memory). Smart session history: capped turns, rolling summary, recent entities."""
+"""Session state and service. Uses session_store for persistence (design §9.4). Smart session history: capped turns, rolling summary, recent entities."""
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from harper_agent.constants import ALLOWED_SESSION_GOALS
 from harper_agent.models import ActiveFocus, SessionState, TurnRecord
+from harper_agent.session_store import get_session as _store_get, save_session as _store_save
 
 MAX_RECENT_TURNS = 6
 MAX_RECENT_ACCOUNT_IDS = 5
 MAX_RECENT_PERSON_IDS = 5
 MAX_ROLLING_SUMMARY_WORDS = 300
+MAX_OPEN_THREADS = 5
+MAX_RECENT_TOPICS = 5
+# MemGPT-style working context cap (chars; ~500 tokens at ~4 chars/token)
+MAX_WORKING_CONTEXT_CHARS = 2000
 
-_sessions: dict[str, SessionState] = {}
 
-
-def get_session(session_id: str) -> SessionState:
-    if session_id in _sessions:
-        return _sessions[session_id]
-    s = SessionState(session_id=session_id)
-    _sessions[session_id] = s
+def get_session(session_id: str, *, tenant_id: str | None = None) -> SessionState:
+    """Load or create session. Session store is tenant-scoped when tenant_id is provided."""
+    state = _store_get(session_id, tenant_id=tenant_id)
+    if state is not None:
+        return state
+    s = SessionState(session_id=session_id, tenant_id=tenant_id)
+    _store_save(session_id, s)
     return s
 
 
 def save_session(session_id: str, state: SessionState) -> None:
-    _sessions[session_id] = state
+    """Update version/updated_at and persist to session store."""
+    state.version += 1
+    state.updated_at = datetime.now(tz=timezone.utc)
+    _store_save(session_id, state)
 
 
 def create_session_id() -> str:
@@ -103,6 +112,30 @@ def update_recent_entities(
 def set_last_intent_constraints(state: SessionState, intent: str | None, constraints: dict[str, str] | None) -> None:
     state.last_intent = intent
     state.last_constraints = constraints or {}
+    if intent:
+        _push_recent_topic(state, intent)
+
+
+def _push_open_thread(state: SessionState, label: str) -> None:
+    out = [x for x in state.open_threads if x != label]
+    out.append(label)
+    state.open_threads = out[-MAX_OPEN_THREADS:]
+
+
+def _push_recent_topic(state: SessionState, topic: str) -> None:
+    out = [x for x in state.recent_topics if x != topic]
+    out.append(topic)
+    state.recent_topics = out[-MAX_RECENT_TOPICS:]
+
+
+def push_open_thread(state: SessionState, label: str) -> None:
+    """Add a thread label (e.g. 'disambiguation'); capped at MAX_OPEN_THREADS."""
+    _push_open_thread(state, label)
+
+
+def clear_open_thread(state: SessionState, label: str) -> None:
+    """Remove a thread label when resolved."""
+    state.open_threads = [x for x in state.open_threads if x != label]
 
 
 def set_session_goal(state: SessionState, goal: str | None) -> None:
@@ -116,3 +149,38 @@ def set_session_goal(state: SessionState, goal: str | None) -> None:
 
 def set_active_focus(state: SessionState, focus_type: str, focus_id: str, confidence: float = 1.0) -> None:
     state.active_focus = ActiveFocus(type=focus_type, id=focus_id, confidence=confidence)
+
+
+# --- MemGPT-style working context (LLM-editable via tools) ---
+
+
+def working_context_append(state: SessionState, text: str) -> str:
+    """Append text to working context. Enforces MAX_WORKING_CONTEXT_CHARS. Returns new working_context."""
+    if not (text or "").strip():
+        return state.working_context or ""
+    new_content = (state.working_context or "").strip()
+    if new_content:
+        new_content += "\n" + (text or "").strip()
+    else:
+        new_content = (text or "").strip()
+    if len(new_content) > MAX_WORKING_CONTEXT_CHARS:
+        new_content = new_content[-MAX_WORKING_CONTEXT_CHARS:]
+    state.working_context = new_content
+    return state.working_context
+
+
+def working_context_replace(state: SessionState, old_substring: str, new_substring: str) -> str:
+    """Replace first occurrence of old_substring with new_substring in working context. Enforces cap. Returns new working_context."""
+    current = state.working_context or ""
+    if not (old_substring or "").strip():
+        return current
+    new_content = current.replace((old_substring or "").strip(), (new_substring or "").strip(), 1)
+    if len(new_content) > MAX_WORKING_CONTEXT_CHARS:
+        new_content = new_content[-MAX_WORKING_CONTEXT_CHARS:]
+    state.working_context = new_content
+    return state.working_context
+
+
+def working_context_get(state: SessionState) -> str:
+    """Return current working context (read-only)."""
+    return state.working_context or ""

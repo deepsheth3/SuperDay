@@ -37,7 +37,11 @@ wheels/
 # Data (optional: remove to commit memory/ folder)
 memory/
 
+# Allow frontend src/lib (root lib/ is for Python)
+!frontend/src/lib/
+!frontend/src/lib/**
+
 # Local / personal – repo is README + app code only
 pdf_to_md.py
-*.pdf
+
 ChatGPT - Deep Resume.md

@@ -6,11 +6,25 @@ from pathlib import Path
 
 from harper_agent.config import get_memory_root
 
-# Evidence source path constants (used by evidence_bundler, main, proactive_suggestions)
+# Evidence source path constants (used by evidence_bundler, archival_storage)
 SOURCE_PATH_PROFILE = "account/profile"
 SOURCE_PATH_STATUS = "account/status"
 SOURCE_PATH_EMAILS = "account/emails"
 SOURCE_PATH_CALLS = "account/calls"
+
+# Evidence bundle scope (intent-aware retrieval; design §15.1)
+EVIDENCE_SCOPE_FULL = "full"
+EVIDENCE_SCOPE_STATUS_ONLY = "status_only"
+EVIDENCE_SCOPE_CONTACT_ONLY = "contact_only"
+EVIDENCE_SCOPE_RECENT_ACTIVITY = "recent_activity"
+EVIDENCE_SCOPE_MINIMAL = "minimal"
+EVIDENCE_SCOPES = frozenset({
+    EVIDENCE_SCOPE_FULL,
+    EVIDENCE_SCOPE_STATUS_ONLY,
+    EVIDENCE_SCOPE_CONTACT_ONLY,
+    EVIDENCE_SCOPE_RECENT_ACTIVITY,
+    EVIDENCE_SCOPE_MINIMAL,
+})
 
 # Intent values returned by entity extractor; validation and prompt building use these
 INTENT_VALUES = frozenset({
@@ -23,7 +37,7 @@ INTENT_VALUES = frozenset({
     "unknown",
 })
 
-# Session goal values (used by session_manager, entity_extractor)
+# Session goal values (used by session_manager)
 ALLOWED_SESSION_GOALS = frozenset({
     "reviewing_one_account",
     "triaging_pipeline",
@@ -87,7 +101,7 @@ def get_confirm_binding_statuses(root: Path | None = None) -> frozenset[str]:
     return _load_status_semantics(root)["confirm_binding"]
 
 
-# Convenience: use default sets when root is not available (e.g. in followup_agent)
+# Convenience: use default sets when root is not available
 WAITING_ON_CLIENT_STATUSES = _DEFAULT_WAITING_ON_CLIENT
 CONFIRM_NEXT_STEPS_STATUSES = _DEFAULT_CONFIRM_NEXT_STEPS
 CONFIRM_BINDING_STATUSES = _DEFAULT_CONFIRM_BINDING
