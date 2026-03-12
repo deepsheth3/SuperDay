@@ -1,19 +1,23 @@
 """MemGPT-style queue manager: token budget, memory pressure warning, eviction to free context."""
 from __future__ import annotations
 
+from harper_agent.config import (
+    CHARS_PER_TOKEN,
+    CONTEXT_BUDGET_TOKENS,
+    EVICT_RATIO,
+    FLUSH_RATIO,
+    WARNING_RATIO,
+)
 from harper_agent.models import SessionState, TurnRecord
 from harper_agent.session_manager import MAX_ROLLING_SUMMARY_WORDS
 
-# Context window budget (tokens). Heuristic: ~4 chars per token.
-DEFAULT_MAX_CONTEXT_TOKENS = 8000
-WARNING_RATIO = 0.7   # Inject memory pressure when usage >= this
-FLUSH_RATIO = 1.0     # Evict when usage >= this
-EVICT_RATIO = 0.5     # When evicting, drop oldest 50% of queue
+# Context budget and ratios from config (single source of truth)
+DEFAULT_MAX_CONTEXT_TOKENS = CONTEXT_BUDGET_TOKENS
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count from character count (~4 chars per token)."""
-    return max(0, len((text or "").strip())) // 4
+    """Estimate token count from character count (chars per token from config)."""
+    return max(0, len((text or "").strip())) // CHARS_PER_TOKEN
 
 
 def context_token_estimate(
@@ -50,7 +54,7 @@ def should_inject_memory_pressure(
         state.working_context or "",
         state.turn_history,
     )
-    return usage >= int(max_tokens * WARNING_RATIO)
+    return usage >= int(max_tokens * float(WARNING_RATIO))
 
 
 def should_evict(
@@ -64,7 +68,7 @@ def should_evict(
         state.working_context or "",
         state.turn_history,
     )
-    return usage >= int(max_tokens * FLUSH_RATIO)
+    return usage >= int(max_tokens * float(FLUSH_RATIO))
 
 
 def _update_rolling_summary_after_evict(

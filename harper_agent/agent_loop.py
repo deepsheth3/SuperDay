@@ -130,6 +130,7 @@ def run_agent_loop_memgpt(
     }
 
     narrative: str | None = None
+    last_account_id: str | None = None
     for _ in range(MAX_AGENT_ITERATIONS):
         inject_pressure = should_inject_memory_pressure(state, system_prompt, DEFAULT_MAX_CONTEXT_TOKENS)
         main_context = _build_main_context(
@@ -159,6 +160,8 @@ def run_agent_loop_memgpt(
             except ValueError as e:
                 result = f"Error: {e}"
             append_turn(state, "assistant", f"[Tool {name}]\n{result}")
+            if name in ("archival_storage.get_evidence", "get_evidence", "compose_answer", "compose") and state.recent_account_ids:
+                last_account_id = state.recent_account_ids[-1]
             if not request_heartbeat:
                 narrative = result
                 break
@@ -171,7 +174,7 @@ def run_agent_loop_memgpt(
     if narrative is None:
         narrative = "I didn't get a clear response. Please try again."
 
-    append_turn(state, "assistant", narrative)
+    append_turn(state, "assistant", narrative, resolved_account_id=last_account_id)
     save_session(session_id, state)
     persist_exchange_async(
         session_id,

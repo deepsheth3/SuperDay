@@ -39,6 +39,43 @@ def _parse_state_from_query(query: str) -> str | None:
     return None
 
 
+def resolve_account_id(value: str, root: Path | None = None) -> str | None:
+    """Resolve a string to an account ID. Accepts either an existing acct_* ID or an account name.
+    Returns the resolved account_id or None if not found or invalid.
+    """
+    root = root or get_memory_root()
+    value = (value or "").strip()
+    if not value:
+        return None
+    # Already looks like an account ID
+    if value.lower().startswith("acct_"):
+        if object_get_account(value, root) is not None:
+            return value
+        return None
+    # Treat as account name: navigate (all accounts) + resolve by name
+    hints = EntityHints(account_name=value, person_name=None)
+    constraints = EntityConstraints(state=None, industry=None, status=None, city=None)
+    frame = EntityFrame(
+        primary_entity_type=PrimaryEntityType.ACCOUNT,
+        entity_hints=hints,
+        constraints=constraints,
+    )
+    candidate_ids, _ = navigate(frame, root)
+    if not candidate_ids:
+        accounts_dir = root / "objects" / "accounts"
+        if accounts_dir.is_dir():
+            candidate_ids = [
+                d.name for d in accounts_dir.iterdir()
+                if d.is_dir() and d.name.startswith("acct_")
+            ]
+    if not candidate_ids:
+        return None
+    resolved_ids, disambig, _ = resolve(frame, candidate_ids, root)
+    if not resolved_ids:
+        return None
+    return resolved_ids[0]
+
+
 def _account_summary_line(account_id: str, root: Path) -> str:
     """One-line summary for an account for search results."""
     data = object_get_account(account_id, root)
@@ -136,9 +173,13 @@ def archival_storage_get_evidence(
 ) -> list[str]:
     """Get evidence bundle for one account as formatted text lines for LLM context.
     Scope: full, status_only, contact_only, recent_activity, minimal.
+    account_id can be an acct_* ID or an account name (resolved via resolve_account_id).
     """
     root = root or get_memory_root()
-    bundle = build_evidence_bundle_from_account_data(account_id, root, scope=scope)
+    resolved = resolve_account_id(account_id, root)
+    if resolved is None:
+        return []
+    bundle = build_evidence_bundle_from_account_data(resolved, root, scope=scope)
     lines = []
     for i, item in enumerate(bundle.items, 1):
         c = item.content

@@ -6,11 +6,20 @@ import re
 from typing import Any, TypedDict
 
 from harper_agent.answer_composer import compose_answer
-from harper_agent.archival_storage import archival_storage_get_evidence, archival_storage_search
+from harper_agent.archival_storage import (
+    archival_storage_get_evidence,
+    archival_storage_search,
+    resolve_account_id,
+)
 from harper_agent.config import get_memory_root
 from harper_agent.evidence_bundler import build_evidence_bundle_from_account_data
 from harper_agent.models import SessionState
-from harper_agent.session_manager import working_context_append, working_context_get, working_context_replace
+from harper_agent.session_manager import (
+    update_recent_entities,
+    working_context_append,
+    working_context_get,
+    working_context_replace,
+)
 from harper_agent.transcript_service import recall_storage_search
 
 
@@ -128,9 +137,15 @@ def execute_tool(
         scope = (args.get("scope") or "full").strip()
         if not account_id:
             return "Error: get_evidence requires account_id."
-        lines = archival_storage_get_evidence(account_id, scope=scope, root=root)
+        resolved_id = resolve_account_id(account_id, root)
+        if resolved_id is None:
+            return f"No account found for '{account_id}'."
+        if state:
+            update_recent_entities(state, account_id=resolved_id)
+            working_context_append(state, f"Current account: {resolved_id}")
+        lines = archival_storage_get_evidence(resolved_id, scope=scope, root=root)
         if not lines:
-            return f"No evidence for account {account_id}."
+            return f"No evidence for account {resolved_id}."
         return "Evidence:\n" + "\n".join(lines)
 
     if name == "working_context.append":
@@ -161,9 +176,15 @@ def execute_tool(
         session_goal = (args.get("session_goal") or "").strip() or None
         if not account_id or not query:
             return "Error: compose_answer requires account_id and query."
-        bundle = build_evidence_bundle_from_account_data(account_id, root, scope=scope)
+        resolved_id = resolve_account_id(account_id, root)
+        if resolved_id is None:
+            return f"No account found for '{account_id}'."
+        if state:
+            update_recent_entities(state, account_id=resolved_id)
+            working_context_append(state, f"Current account: {resolved_id}")
+        bundle = build_evidence_bundle_from_account_data(resolved_id, root, scope=scope)
         if not bundle.items:
-            return f"No evidence for account {account_id}."
+            return f"No evidence for account {resolved_id}."
         composed = compose_answer(bundle, query, session_goal=session_goal)
         return composed.narrative or "(no narrative)"
 

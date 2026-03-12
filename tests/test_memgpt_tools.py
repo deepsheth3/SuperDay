@@ -1,10 +1,12 @@
 """Tests for MemGPT-style components: recall search, queue manager, function executor, working context."""
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from unittest import TestCase
 
+from harper_agent.archival_storage import resolve_account_id
 from harper_agent.function_executor import (
     execute_tool,
     parse_llm_output,
@@ -41,18 +43,19 @@ class TestQueueManager(TestCase):
 
         state = SessionState(session_id="q1", working_context="x" * 100)
         state.turn_history = [TurnRecord(role="user", message="hi"), TurnRecord(role="assistant", message="hello")]
-        # Small context: no pressure
-        self.assertFalse(should_inject_memory_pressure(state, "system", max_tokens=8000))
+        # Small context: no pressure (use 8k budget for test)
+        self.assertFalse(should_inject_memory_pressure(state, "system", max_tokens=8_000))
         # Huge system + many turns: pressure
         state.turn_history = [TurnRecord(role="user", message="x" * 2000)] * 20
-        self.assertTrue(should_inject_memory_pressure(state, "x" * 10000, max_tokens=8000))
+        self.assertTrue(should_inject_memory_pressure(state, "x" * 10000, max_tokens=8_000))
 
     def test_should_evict(self) -> None:
         from harper_agent.models import TurnRecord
 
         state = SessionState(session_id="q2")
+        # Exceed 8k token budget so eviction triggers (test uses fixed budget)
         state.turn_history = [TurnRecord(role="user", message="a" * 500)] * 80
-        self.assertTrue(should_evict(state, "sys" * 1000, max_tokens=8000))
+        self.assertTrue(should_evict(state, "sys" * 1000, max_tokens=8_000))
 
     def test_evict_oldest_messages(self) -> None:
         from harper_agent.models import TurnRecord
@@ -108,6 +111,49 @@ class TestWorkingContextTools(TestCase):
         working_context_replace(state, "acct_old", "acct_new")
         self.assertIn("acct_new", state.working_context)
         self.assertNotIn("acct_old", state.working_context)
+
+
+class TestResolveAccountId(TestCase):
+    """Tests for resolve_account_id (name or acct_* ID -> account_id)."""
+
+    def test_resolve_empty_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertIsNone(resolve_account_id("", root))
+            self.assertIsNone(resolve_account_id("   ", root))
+
+    def test_resolve_by_id_when_account_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "objects" / "accounts" / "acct_xyz").mkdir(parents=True)
+            (root / "objects" / "accounts" / "acct_xyz" / "profile.json").write_text(
+                json.dumps({"company_name": "Test Co"}), encoding="utf-8"
+            )
+            self.assertEqual(resolve_account_id("acct_xyz", root), "acct_xyz")
+
+    def test_resolve_by_id_when_account_missing_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "objects" / "accounts").mkdir(parents=True)
+            self.assertIsNone(resolve_account_id("acct_nonexistent", root))
+
+    def test_resolve_by_name_returns_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "objects" / "accounts" / "acct_hl").mkdir(parents=True)
+            (root / "objects" / "accounts" / "acct_hl" / "profile.json").write_text(
+                json.dumps({"company_name": "Harbor Tech Labs"}), encoding="utf-8"
+            )
+            self.assertEqual(resolve_account_id("Harbor Tech Labs", root), "acct_hl")
+
+    def test_resolve_by_name_no_match_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "objects" / "accounts" / "acct_other").mkdir(parents=True)
+            (root / "objects" / "accounts" / "acct_other" / "profile.json").write_text(
+                json.dumps({"company_name": "Other Co"}), encoding="utf-8"
+            )
+            self.assertIsNone(resolve_account_id("Harbor Tech Labs", root))
 
 
 class TestRecallStorageSearch(TestCase):

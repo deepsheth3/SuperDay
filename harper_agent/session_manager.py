@@ -4,18 +4,24 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from harper_agent.config import (
+    _max_recent_turns,
+    _rolling_summary_max_words,
+    _working_context_max_chars,
+)
 from harper_agent.constants import ALLOWED_SESSION_GOALS
 from harper_agent.models import ActiveFocus, SessionState, TurnRecord
 from harper_agent.session_store import get_session as _store_get, save_session as _store_save
 
-MAX_RECENT_TURNS = 6
+# Derived from context budget ratios (config.py)
+MAX_RECENT_TURNS = _max_recent_turns()
+MAX_ROLLING_SUMMARY_WORDS = _rolling_summary_max_words()
+MAX_WORKING_CONTEXT_CHARS = _working_context_max_chars()
+
 MAX_RECENT_ACCOUNT_IDS = 5
 MAX_RECENT_PERSON_IDS = 5
-MAX_ROLLING_SUMMARY_WORDS = 300
 MAX_OPEN_THREADS = 5
 MAX_RECENT_TOPICS = 5
-# MemGPT-style working context cap (chars; ~500 tokens at ~4 chars/token)
-MAX_WORKING_CONTEXT_CHARS = 2000
 
 
 def get_session(session_id: str, *, tenant_id: str | None = None) -> SessionState:

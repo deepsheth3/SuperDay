@@ -9,9 +9,10 @@ from harper_agent.session_manager import (
     get_session,
     update_recent_entities,
     set_last_intent_constraints,
-    MAX_RECENT_TURNS,
     MAX_RECENT_ACCOUNT_IDS,
     MAX_RECENT_PERSON_IDS,
+    MAX_RECENT_TURNS,
+    MAX_ROLLING_SUMMARY_WORDS,
 )
 
 
@@ -20,21 +21,21 @@ class TestSmartSessionTurnCap(TestCase):
 
     def test_turn_cap_and_rolling_summary(self) -> None:
         state = SessionState(session_id="test-cap")
-        for i in range(8):
+        for i in range(MAX_RECENT_TURNS + 2):
             append_turn(
                 state,
                 "user" if i % 2 == 0 else "assistant",
                 f"message {i}",
                 resolved_account_id=f"acct_{i}" if i % 2 == 1 else None,
             )
-        self.assertEqual(len(state.turn_history), MAX_RECENT_TURNS, "turn_history should be capped at 6")
+        self.assertEqual(len(state.turn_history), MAX_RECENT_TURNS, "turn_history should be capped at MAX_RECENT_TURNS")
         self.assertTrue(
             bool(state.rolling_summary.strip()),
             "rolling_summary should be non-empty after dropping turns",
         )
         self.assertLessEqual(
             len(state.rolling_summary.split()),
-            300,
+            MAX_ROLLING_SUMMARY_WORDS,
             "rolling_summary should be word-capped",
         )
 
