@@ -96,6 +96,25 @@ The agent uses a **MemGPT-style agentic loop**: the LLM controls the flow and ca
 
 ---
 
+## Agent tools
+
+The LLM calls these tools during the agentic loop. All are implemented in `harper_agent/function_executor.py`.
+
+| Tool | What it does |
+|------|----------------|
+| **recall_storage.search** | Search this session’s past conversation (transcript). Optional `query` (keyword filter); `page` and `limit` for pagination. Use when the user refers to something said earlier (e.g. “that account we discussed”). |
+| **archival_storage.search** | Search account/business memory (indices + objects) by filters: `query`, `state`, `industry`, `status`, `city`, `account_name`, `person_name`. Returns paginated one-line summaries (account_id, name, status, location). Use for “accounts in Texas”, “list hospitality accounts”, or to find an account by name. |
+| **archival_storage.get_evidence** | Load the full evidence bundle for **one** account. Accepts `account_id` (an `acct_*` ID or an account name; names are resolved to IDs). `scope`: `full`, `status_only`, `contact_only`, `recent_activity`, or `minimal`. Use before answering detailed questions about a specific account (calls, emails, status). Updates session’s current account for follow-ups. |
+| **working_context.append** | Append a fact or note to the agent’s working context (e.g. “Current account: acct_xyz”). Capped by config; overflow is trimmed from the start. |
+| **working_context.replace** | Replace the first occurrence of a substring in working context with new text (e.g. update the current account). Same cap as append. |
+| **working_context.get** | Read the current working context. Use to see what the agent has stored before deciding the next tool call. |
+| **compose_answer** | Turn evidence into a short, grounded narrative. Requires `account_id` (ID or name) and `query` (the user’s question). Optionally `scope` and `session_goal`. Loads evidence, runs the answer-composer LLM, returns the narrative. Updates session’s current account. Use when the user asks something about a specific account and you have or can resolve the account_id. |
+| **send_message** | Send the final reply to the user. The agent calls this with `message` (the reply text) and `request_heartbeat: false` when done. |
+
+**Notes:** `account_id` in **get_evidence** and **compose_answer** can be an `acct_*` ID or a company name (e.g. “Harbor Tech Labs”); the system resolves names to IDs. After get_evidence or compose_answer, the session’s “current account” is updated so follow-ups like “summarize the calls for me” can use that account without the user repeating the name.
+
+---
+
 ## LLM workflow (where the models are used)
 
 | Step | Role | What the LLM does |
