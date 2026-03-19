@@ -1,6 +1,15 @@
-# Harper Agent
+# SuperDay — Harper platform
 
-**Harper** is an AI agent that answers questions about insurance accounts using a **multi-index memory**: user queries are interpreted by an LLM helper, resolved against semantic indices (location, industry, status, person), and answered with grounded, cited summaries.
+**SuperDay** is the monorepo for **Harper**: a **grounded AI assistant** for insurance-style account work, delivered as a **small platform** you can run locally and extend toward production.
+
+| Layer | What it is |
+|-------|------------|
+| **Harper agent** | [`backend/harper_agent/`](backend/harper_agent/) — reactive loop, tools, **multi-index memory** (`memory/objects/` + `memory/indices/`) so answers are resolved by dimension (location, industry, status, person, …) and returned with **citations**, not free-form guesswork. |
+| **Chat service** | [`backend/app/`](backend/app/) — **FastAPI** API: JSON + **SSE** streaming chat, **JWT** auth (optional), **ingest** routes, **HMAC webhooks**, optional **GCP Pub/Sub** / **S3** / **OpenSearch** / **Vertex** (see [`backend/docs/CLOUD_SETUP.md`](backend/docs/CLOUD_SETUP.md)). |
+| **Ingest pipeline** | Accept events with **atomic idempotency** → normalize → chunk → embed/index (file-backed by default; **Postgres** schema in [`backend/sql/001_schema.sql`](backend/sql/001_schema.sql) for when you wire the DB). |
+| **UI** | [`frontend/`](frontend/) — **Next.js** chat client. |
+
+Harper is **not** a single script: it is **agent + API + pipeline + UI**, with clear docs for security ([`docs/SECURITY_AND_COMMS.md`](docs/SECURITY_AND_COMMS.md)) and architecture ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
 ---
 
@@ -18,13 +27,17 @@ Create a `.env` file with your Gemini API key (required for the agent LLM and an
 GEMINI_API_KEY=your_key_here
 ```
 
-Run the **API** (Flask) and the **frontend** (Next.js) separately:
+Run the **Harper Chat Service** (FastAPI) and the **frontend** (Next.js) separately.
 
 **Terminal 1 – API**
 ```bash
-python app.py
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 ```
-Runs the Harper API on **http://127.0.0.1:5050**. `GET /` redirects to the frontend.
+Runs on **http://127.0.0.1:8080**. `GET /` redirects to the frontend URL (`FRONTEND_URL`). Agent code and tools live in [`backend/harper_agent/`](backend/harper_agent/); **your account data stays in repo `memory/`** (see [Configuration](#configuration)).
+
+More detail: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** (diagrams + module map), **[`docs/SECURITY_AND_COMMS.md`](docs/SECURITY_AND_COMMS.md)** (JWT, tenants, webhooks, SSE/WS), [`docs/ARCHITECTURE_MIGRATION.md`](docs/ARCHITECTURE_MIGRATION.md), [`backend/README.md`](backend/README.md). **GCP / AWS / DB:** [`backend/docs/CLOUD_SETUP.md`](backend/docs/CLOUD_SETUP.md) and [`backend/.env.example`](backend/.env.example). **Follow-up agent (planned):** [`backend/docs/FOLLOWUP_AGENT.md`](backend/docs/FOLLOWUP_AGENT.md).
 
 **Terminal 2 – Frontend**
 ```bash
@@ -33,7 +46,7 @@ cp .env.local.example .env.local
 npm install
 npm run dev
 ```
-Runs the Next.js chat UI on **http://localhost:3000**. Open this URL to chat. Set `FRONTEND_URL=http://localhost:3000` in root `.env` if needed for CORS.
+Runs the Next.js chat UI on **http://localhost:3000**. Open this URL to chat. In `frontend/.env.local` set `NEXT_PUBLIC_API_URL=http://localhost:8080`. Set `FRONTEND_URL=http://localhost:3000` for API CORS if needed.
 
 
 ---
@@ -98,7 +111,7 @@ The agent uses a **MemGPT-style agentic loop**: the LLM controls the flow and ca
 
 ## Agent tools
 
-The LLM calls these tools during the agentic loop. All are implemented in `harper_agent/function_executor.py`.
+The LLM calls these tools during the agentic loop. All are implemented in `backend/harper_agent/function_executor.py`.
 
 | Tool | What it does |
 |------|----------------|
@@ -132,7 +145,7 @@ Both use the **Gemini API** (`GEMINI_API_KEY` in `.env`).
 |----------|-------------|
 | `GEMINI_API_KEY` | **Required.** Used for the agent LLM and answer composition. A paid key is recommended to avoid rate limits. |
 | `HARPER_MEMORY_ROOT` | Path to the `memory` directory (default: `memory`). |
-| `PORT` | API port (default: `5050`). |
+| `PORT` | API port when using `run_20_queries.py` subprocess (default: `8080`). |
 | `FRONTEND_URL` | Origin of the Next.js frontend for CORS and redirects (default: `http://localhost:3000`). |
 
 ---
@@ -153,8 +166,8 @@ python run_20_queries.py
 
 **What this does:**
 
-1. **Starts the Flask app** in the background on http://127.0.0.1:5050.
-2. **Opens your browser** to that URL (or open the Next.js frontend at http://localhost:3000 if it’s running) with a unique session ID so the UI stays in sync.
+1. **Starts the FastAPI app** (uvicorn) on http://127.0.0.1:8080 (override with `PORT`).
+2. **Opens your browser** to the Next.js frontend (`FRONTEND_URL`, default http://localhost:3000) with a unique session ID so the UI stays in sync.
 3. **Sends all 20 queries one by one** to the API: each query is posted, then the script waits ~3 seconds for the answer to appear in the UI, then ~2 seconds before sending the next query.
 4. **Leaves the server running** when done so you can keep chatting in the browser.
 
@@ -199,42 +212,20 @@ Below is the outcome of a full run with the LLM helper and summarizer enabled. �
 
 ```
 .
-├── app.py                 # Harper API (Flask); GET / redirects to frontend
-├── frontend/              # Next.js chat UI (TypeScript, Tailwind, App Router)
-│   ├── src/app/           # Chat page, layout, globals
-│   └── src/lib/api.ts     # getHistory, sendMessage, types
-├── run_20_queries.py      # Run all 20 sample queries in one session
-├── run_sample_queries.py  # Shorter sample set
-├── harper_agent/
-│   ├── main.py            # Entry: run_agent_loop → agentic loop
-│   ├── agent_loop.py      # MemGPT-style loop: queue manager, LLM, function executor
-│   ├── agent_prompts.py   # System prompt + tool schemas
-│   ├── function_executor.py # Parse LLM output, run tools (recall, archival, working context, compose)
-│   ├── queue_manager.py   # Token budget, memory pressure, eviction to recall
-│   ├── archival_storage.py # Archival search + get_evidence (indices + objects)
-│   ├── transcript_service.py # Recall storage: persist, search
-│   ├── session_manager.py # Session state, working context, FIFO
-│   ├── session_store.py   # Durable session persistence (file-based)
-│   ├── config.py          # MEMORY_ROOT
-│   ├── models.py          # EntityFrame, SessionState, EvidenceBundle, etc.
-│   ├── index_navigator.py # Read indices, intersect by constraints
-│   ├── resolver.py        # Filter by account name
-│   ├── evidence_bundler.py
-│   ├── answer_composer.py # LLM summarization + citations
-│   ├── tools.py           # object_get_account
-│   ├── messages.py        # User-facing message constants
-│   ├── constants.py       # Intents, goals, evidence scopes, status semantics
-│   └── normalize.py       # Slug/state helpers
-├── memory/                # Populated by ingest or preloaded
-│   ├── objects/accounts/
-│   ├── objects/people/
-│   └── indices/           # location, industry, status, person
+├── backend/                   # Harper backend (FastAPI + agent + workers)
+│   ├── app/                   # FastAPI: api/, services/harper_bridge.py, db/, schemas/, …
+│   ├── harper_agent/          # Reactive agent: MemGPT loop, tools, sessions, transcripts
+│   ├── sql/, specs/, infra/, docs/, runbooks/
+│   └── requirements.txt
+├── frontend/                  # Next.js chat UI (TypeScript, Tailwind, App Router)
+│   ├── src/app/
+│   └── src/lib/api.ts
+├── memory/                    # Your data: objects/, indices/, transcripts/ (not removed by code changes)
+├── run_20_queries.py          # Start API from backend/ + hit /api/chat 20× (PORT default 8080)
+├── run_sample_queries.py      # Direct agent loop in-process (no HTTP)
 ├── tests/
-│   ├── test_memgpt_tools.py
-│   ├── test_constants_no_hardcoded.py
-│   ├── test_session_goals.py
-│   ├── test_smart_session.py
-│   └── test_new_intents_confidence.py
+│   ├── conftest.py            # Puts backend/ on PYTHONPATH
+│   └── …
 └── README.md
 ```
 

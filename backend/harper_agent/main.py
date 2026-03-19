@@ -40,6 +40,7 @@ def run_agent_loop(
     goal: str | None = None,
     tenant_id: str | None = None,
     trace_id: str | None = None,
+    request_id: str | None = None,
     stream_callback: Callable[[str, Any], None] | None = None,
 ) -> dict:
     """MemGPT-style agentic loop: LLM decides when to search recall/archival, edit working context, and respond."""
@@ -50,6 +51,7 @@ def run_agent_loop(
         goal=goal,
         tenant_id=tenant_id,
         trace_id=trace_id,
+        request_id=request_id,
     )
     out = _result(
         result["narrative"],
@@ -57,5 +59,8 @@ def run_agent_loop(
         suggested_follow_ups=result.get("suggested_follow_ups"),
     )
     if stream_callback:
-        stream_callback("result", out)
+        payload = {**out, "session_id": session_id}
+        if request_id:
+            payload["request_id"] = request_id
+        stream_callback("result", payload)
     return out

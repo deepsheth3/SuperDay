@@ -9,13 +9,6 @@ import {
   type TurnReference,
 } from "@/lib/api";
 
-const SAMPLE_QUERIES = [
-  { label: "Evergreen status", query: "What is the status of Evergreen Public Services?" },
-  { label: "Harborline Hotel", query: "Tell me about Harborline Hotel Group" },
-  { label: "Accounts in CO", query: "Accounts in Colorado" },
-  { label: "Skyline contact", query: "Who is the contact for Skyline Protective Services?" },
-];
-
 function MessageBubble({
   turn,
   isThinking,
@@ -165,10 +158,6 @@ export default function ChatPage() {
     }
   }, [input, loading, sessionId]);
 
-  const handleSample = (query: string) => {
-    setInput(query);
-  };
-
   const handleSuggestedClick = (s: string) => {
     setInput(s);
   };
@@ -235,7 +224,7 @@ export default function ChatPage() {
         </div>
         {suggestedFollowUps.length > 0 && (
           <div className="max-w-3xl mx-auto mt-2">
-            <p className="text-xs text-harper-text opacity-80 mb-1">Suggestions:</p>
+            <p className="text-xs text-harper-text opacity-80 mb-1">Suggested queries:</p>
             <div className="flex flex-wrap gap-2">
               {suggestedFollowUps.map((s, i) => (
                 <button
@@ -250,21 +239,6 @@ export default function ChatPage() {
             </div>
           </div>
         )}
-        <div className="max-w-3xl mx-auto mt-2">
-          <p className="text-xs text-harper-text opacity-80 mb-1">Sample queries:</p>
-          <div className="flex flex-wrap gap-2">
-            {SAMPLE_QUERIES.map(({ label, query }) => (
-              <button
-                key={query}
-                type="button"
-                onClick={() => handleSample(query)}
-                className="text-xs px-3 py-1.5 border border-harper-secondary text-harper-secondary rounded-md hover:border-harper-accent hover:text-harper-accent hover:bg-harper-accent/10"
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );

@@ -94,6 +94,7 @@ def persist_exchange_async(
     references: list[dict[str, Any]] | None = None,
     list_items: list[str] | None = None,
     tenant_id: str | None = None,
+    request_id: str | None = None,
     root: Path | None = None,
 ) -> None:
     """Fire-and-forget persist of one user/assistant exchange for replay and audit."""
@@ -101,6 +102,9 @@ def persist_exchange_async(
         try:
             ts = datetime.now(tz=timezone.utc).isoformat()
             turn_id = str(uuid.uuid4())
+            user_meta: dict[str, Any] = {}
+            if request_id:
+                user_meta["request_id"] = request_id
             append_turn(
                 session_id,
                 "user",
@@ -108,6 +112,7 @@ def persist_exchange_async(
                 turn_id=turn_id,
                 timestamp=ts,
                 tenant_id=tenant_id,
+                metadata=user_meta or None,
                 root=root,
             )
             append_turn(

@@ -1,0 +1,40 @@
+# Pub/Sub topics (v1). Subscriptions use push to Cloud Run worker URLs or pull from GCE.
+# Lexical indexing is NOT a separate topic — embed worker upserts OpenSearch + Vertex.
+
+topics:
+  - name: ingest-accepted
+    subscriptions:
+      - name: normalize-sub
+        ack_deadline_seconds: 60
+        dead_letter_topic: normalize-dlq
+        max_delivery_attempts: 10
+  - name: embed-chunk
+    subscriptions:
+      - name: embed-sub
+        ack_deadline_seconds: 120
+        dead_letter_topic: embed-dlq
+        max_delivery_attempts: 10
+  - name: archive-run
+    subscriptions:
+      - name: archive-sub
+        ack_deadline_seconds: 300
+        dead_letter_topic: archive-dlq
+        max_delivery_attempts: 10
+  - name: reindex-run
+    subscriptions:
+      - name: reindex-sub
+        ack_deadline_seconds: 300
+        dead_letter_topic: reindex-dlq
+        max_delivery_attempts: 10
+  - name: rehydration-request
+    subscriptions:
+      - name: rehydration-sub
+        ack_deadline_seconds: 600
+        dead_letter_topic: rehydration-dlq
+        max_delivery_attempts: 10
+  - name: followup-run
+    subscriptions:
+      - name: followup-sub
+        ack_deadline_seconds: 300
+        dead_letter_topic: followup-dlq
+        max_delivery_attempts: 10

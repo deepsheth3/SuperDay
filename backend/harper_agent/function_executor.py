@@ -234,7 +234,7 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "send_message",
-        "description": "Send your final reply to the user. Use when you are done with tool use and want to respond. Include request_heartbeat: false.",
-        "arguments": ["message (your reply text)"],
+        "description": "Send your final reply to the user. Include suggested_follow_ups: 2–4 short follow-up questions the user might ask next (based on your answer). Use when done with tool use. Include request_heartbeat: false.",
+        "arguments": ["message (your reply text)", "suggested_follow_ups (array of 2–4 strings)"],
     },
 ]

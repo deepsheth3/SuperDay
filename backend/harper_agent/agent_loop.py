@@ -96,6 +96,7 @@ def run_agent_loop_memgpt(
     goal: str | None = None,
     tenant_id: str | None = None,
     trace_id: str | None = None,
+    request_id: str | None = None,
 ) -> dict:
     """Run the MemGPT-style agentic loop: append user message, manage queue, call LLM, execute tools, return final response."""
     root = get_memory_root(tenant_id)
@@ -131,6 +132,7 @@ def run_agent_loop_memgpt(
 
     narrative: str | None = None
     last_account_id: str | None = None
+    last_suggested_follow_ups: list[str] | None = None
     for _ in range(MAX_AGENT_ITERATIONS):
         inject_pressure = should_inject_memory_pressure(state, system_prompt, DEFAULT_MAX_CONTEXT_TOKENS)
         main_context = _build_main_context(
@@ -154,6 +156,12 @@ def run_agent_loop_memgpt(
             name = (msg_or_name or "").strip()
             if name in ("send_message", "message"):
                 narrative = (args or {}).get("message") or (args or {}).get("content") or ""
+                raw = (args or {}).get("suggested_follow_ups")
+                if isinstance(raw, list):
+                    last_suggested_follow_ups = [
+                        str(s).strip() for s in raw[:4]
+                        if s and str(s).strip()
+                    ] or None
                 break
             try:
                 result = execute_tool(name, args or {}, ctx)
@@ -181,11 +189,12 @@ def run_agent_loop_memgpt(
         query,
         narrative,
         tenant_id=tenant_id,
+        request_id=request_id,
         root=root,
     )
 
     return {
         "narrative": narrative,
         "references": None,
-        "suggested_follow_ups": None,
+        "suggested_follow_ups": last_suggested_follow_ups,
     }

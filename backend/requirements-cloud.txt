@@ -1,0 +1,6 @@
+# Optional: install when wiring GCP + AWS (see docs/CLOUD_SETUP.md)
+#   pip install -r requirements.txt -r requirements-cloud.txt
+google-cloud-pubsub>=2.21.0
+google-cloud-aiplatform>=1.70.0
+boto3>=1.34.0
+opensearch-py>=2.6.0

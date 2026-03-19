@@ -1,0 +1,457 @@
+openapi: 3.1.0
+info:
+  title: Harper Chat & Ingest API
+  version: 1.0.0
+  description: Executable contract aligned with production LLD (idempotent chat, ingest, rehydration).
+
+paths:
+  /api/chat:
+    post:
+      operationId: postChat
+      summary: Synchronous chat (idempotent via request_id)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: Success or idempotent replay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Disambiguation required or duplicate in-flight
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/EvidenceUnavailable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Degraded'
+
+  /api/chat/stream:
+    post:
+      operationId: postChatStream
+      summary: SSE streaming chat (same idempotency as /api/chat)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '409':
+          description: stream_unknown — cannot resume
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/history:
+    get:
+      operationId: getHistory
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryResponse'
+
+  /api/transcript:
+    get:
+      operationId: getTranscript
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptResponse'
+
+  /api/ingest/email:
+    post:
+      operationId: ingestEmail
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestEmailRequest'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestAcceptedResponse'
+        '409':
+          description: Duplicate source event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/ingest/text:
+    post:
+      operationId: ingestText
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestTextRequest'
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestAcceptedResponse'
+
+  /api/ingest/call_transcript:
+    post:
+      operationId: ingestCallTranscript
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestCallRequest'
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestAcceptedResponse'
+
+  /api/ingest/batch:
+    post:
+      operationId: ingestBatch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestBatchRequest'
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestBatchResponse'
+
+  /api/rehydration/request:
+    post:
+      operationId: requestRehydration
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RehydrationRequest'
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RehydrationAcceptedResponse'
+
+components:
+  parameters:
+    SessionId:
+      name: session_id
+      in: query
+      schema:
+        type: string
+        format: uuid
+    TenantId:
+      name: tenant_id
+      in: header
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    ValidationError:
+      description: validation_error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: validation_error
+            message: Invalid payload
+            retryable: false
+            trace_id: trc_xxx
+    Unauthorized:
+      description: unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: tenant_scope_denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    EvidenceUnavailable:
+      description: evidence_unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: rate_limited
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Degraded:
+      description: degraded_mode_active
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ChatRequest:
+      type: object
+      required: [message, request_id]
+      properties:
+        message:
+          type: string
+        request_id:
+          type: string
+          format: uuid
+          description: Client-generated idempotency key; scoped to (tenant_id, session_id).
+        session_id:
+          type: string
+          format: uuid
+        goal:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        resume_token:
+          type: string
+          description: Optional SSE resume hint after reconnect.
+
+    ChatResponse:
+      type: object
+      properties:
+        reply:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+        request_id:
+          type: string
+          format: uuid
+        references:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reference'
+        suggested_follow_ups:
+          type: array
+          items:
+            type: string
+        freshness_notice:
+          $ref: '#/components/schemas/FreshnessNotice'
+        disambiguation:
+          $ref: '#/components/schemas/DisambiguationPayload'
+        idempotent_replay:
+          type: boolean
+          description: True if this response was served from prior request_id completion.
+
+    Reference:
+      type: object
+      properties:
+        reference_type:
+          type: string
+          enum: [chunk, thread, communication, timeline]
+        reference_id:
+          type: string
+          format: uuid
+        citation_text:
+          type: string
+
+    FreshnessNotice:
+      type: object
+      properties:
+        message:
+          type: string
+        partial_index:
+          type: boolean
+        max_lag_seconds:
+          type: integer
+
+    DisambiguationPayload:
+      type: object
+      required: [candidates]
+      properties:
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              account_id:
+                type: string
+                format: uuid
+              display_name:
+                type: string
+              confidence:
+                type: number
+        original_query:
+          type: string
+
+    HistoryResponse:
+      type: object
+      properties:
+        turns:
+          type: array
+          items:
+            type: object
+        session_id:
+          type: string
+          format: uuid
+
+    TranscriptResponse:
+      type: object
+      properties:
+        turns:
+          type: array
+          items:
+            type: object
+        session_id:
+          type: string
+          format: uuid
+
+    IngestEmailRequest:
+      type: object
+      required: [tenant_id, source_system, source_event_id, raw_payload_ref]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        source_system:
+          type: string
+        source_event_id:
+          type: string
+        raw_payload_ref:
+          type: string
+          description: S3 key or staging URI after upload
+        occurred_at:
+          type: string
+          format: date-time
+
+    IngestTextRequest:
+      allOf:
+        - $ref: '#/components/schemas/IngestEmailRequest'
+
+    IngestCallRequest:
+      allOf:
+        - $ref: '#/components/schemas/IngestEmailRequest'
+
+    IngestBatchRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/IngestEmailRequest'
+
+    IngestAcceptedResponse:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        trace_id:
+          type: string
+
+    IngestBatchResponse:
+      type: object
+      properties:
+        accepted:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngestAcceptedResponse'
+        rejected:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    RehydrationRequest:
+      type: object
+      required: [tenant_id, account_id, time_range_start, time_range_end, reason]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        time_range_start:
+          type: string
+          format: date-time
+        time_range_end:
+          type: string
+          format: date-time
+        reason:
+          type: string
+
+    RehydrationAcceptedResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        expected_latency_class:
+          type: string
+          enum: [minutes, hours]
+
+    ErrorResponse:
+      type: object
+      required: [error_code, message, retryable, trace_id]
+      properties:
+        error_code:
+          type: string
+          enum:
+            - validation_error
+            - unauthorized
+            - tenant_scope_denied
+            - disambiguation_required
+            - evidence_unavailable
+            - rate_limited
+            - stream_unknown
+            - degraded_mode_active
+            - duplicate_source_event
+        message:
+          type: string
+        retryable:
+          type: boolean
+        trace_id:
+          type: string
+        details:
+          type: object
+          additionalProperties: true

@@ -1,0 +1,19 @@
+# Cloud Run services — one per worker type (or single multi-handler with different SA).
+# Use same image, different CMD / env WORKER_MODE=normalize|embed|archive|reindex|rehydration
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: harper-worker-embed
+spec:
+  template:
+    spec:
+      containerConcurrency: 1
+      timeoutSeconds: 300
+      containers:
+        - image: gcr.io/PROJECT/harper-workers:latest
+          env:
+            - name: WORKER_MODE
+              value: embed
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: harper-db-url, key: latest }

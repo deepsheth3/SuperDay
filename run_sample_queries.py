@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 """Run sample test queries and print outputs. Use one session for session-aware flow."""
+from __future__ import annotations
+
+import sys
+import os
+from pathlib import Path
+
+_cs = Path(__file__).resolve().parent / "backend"
+if str(_cs) not in sys.path:
+    sys.path.insert(0, str(_cs))
+
 from harper_agent.main import run_agent_loop
 
 SESSION = "sample-session"
@@ -18,7 +28,10 @@ QUERIES = [
     ("[5] Session: contact for that", "Who was the contact for that?"),
 ]
 
+
 def main():
+    _repo = Path(__file__).resolve().parent
+    os.environ.setdefault("HARPER_MEMORY_ROOT", str(_repo / "memory"))
     print("=" * 70)
     print("HARPER AGENT – SAMPLE QUERIES & OUTPUTS")
     print("=" * 70)
@@ -30,13 +43,16 @@ def main():
         if result.get("list_items"):
             narrative += "\n" + "\n".join("  • " + item for item in result["list_items"])
         if result.get("references"):
-            narrative += "\n\nReferences:\n" + "\n".join("  [{}] {}".format(r["num"], r.get("label", r.get("source_id", ""))) for r in result["references"])
+            narrative += "\n\nReferences:\n" + "\n".join(
+                "  [{}] {}".format(r["num"], r.get("label", r.get("source_id", ""))) for r in result["references"]
+            )
         out = narrative if len(narrative) <= 600 else narrative[:597] + "..."
         print(f"Reply:\n{out}")
     print("\n" + "=" * 70)
-    print("Done. Start the UI with: python app.py")
-    print("Then open http://127.0.0.1:5050 and try the same queries.")
+    print("Done. Start the API: cd backend && uvicorn app.main:app --port 8080")
+    print("Frontend: http://localhost:3000 — set NEXT_PUBLIC_API_URL=http://localhost:8080")
     print("=" * 70)
+
 
 if __name__ == "__main__":
     main()
